@@ -1,25 +1,36 @@
 {
   "version": "0.2.0",
   "configurations": [
-    // ─── Backend: Attach to running Docker container ───────────────────────
+    // ─── Backend: Launch với debugger (F5) ────────────────────────────────
+    // Dùng khi ở trong Dev Container — build rồi launch thẳng, không cần pipe
     {
-      "name": "🔵 Backend: Attach (Docker)",
+      "name": "🔵 Backend: Launch & Debug",
       "type": "coreclr",
-      "request": "attach",
-      "processId": "${command:pickRemoteProcess}",
-      "pipeTransport": {
-        "pipeProgram": "docker",
-        "pipeArgs": ["exec", "-i", "poc-aura-backend-dev"],
-        "debuggerPath": "/vsdbg/vsdbg",
-        "pipeCwd": "${workspaceFolder}"
-      },
-      "sourceFileMap": {
-        "/app": "${workspaceFolder}/backend"
+      "request": "launch",
+      "preLaunchTask": "build: backend",
+      "program": "/workspace/backend/POC.AURA.Api/bin/Debug/net8.0/POC.AURA.Api.dll",
+      "args": [],
+      "cwd": "/workspace/backend/POC.AURA.Api",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://0.0.0.0:5000",
+        "ConnectionStrings__DefaultConnection": "Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;"
       },
       "justMyCode": true
     },
 
-    // ─── Frontend: Chrome debugger ─────────────────────────────────────────
+    // ─── Backend: Attach vào process đang chạy (dotnet watch) ────────────
+    // Dùng khi đã có `dotnet watch run` đang chạy trong terminal
+    {
+      "name": "🔵 Backend: Attach (process)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}",
+      "justMyCode": true
+    },
+
+    // ─── Frontend: Chrome debugger ────────────────────────────────────────
     {
       "name": "🟠 Frontend: Chrome (localhost:4200)",
       "type": "chrome",
@@ -32,7 +43,7 @@
       }
     },
 
-    // ─── Frontend: Edge debugger (alternative) ─────────────────────────────
+    // ─── Frontend: Edge debugger ──────────────────────────────────────────
     {
       "name": "🟠 Frontend: Edge (localhost:4200)",
       "type": "msedge",
@@ -43,28 +54,14 @@
         "webpack:///./src/*": "${webRoot}/*",
         "ng:///*": "${webRoot}/*"
       }
-    },
+    }
+  ],
 
-    // ─── Compound: Start both debuggers together ────────────────────────────
+  "compounds": [
     {
       "name": "🚀 Full Stack Debug",
-      "type": "coreclr",
-      "request": "attach",
-      "processId": "${command:pickRemoteProcess}",
-      "pipeTransport": {
-        "pipeProgram": "docker",
-        "pipeArgs": ["exec", "-i", "poc-aura-backend-dev"],
-        "debuggerPath": "/vsdbg/vsdbg",
-        "pipeCwd": "${workspaceFolder}"
-      },
-      "sourceFileMap": {
-        "/app": "${workspaceFolder}/backend"
-      },
-      "serverReadyAction": {
-        "action": "startDebugging",
-        "name": "🟠 Frontend: Chrome (localhost:4200)"
-      },
-      "justMyCode": true
+      "configurations": ["🔵 Backend: Launch & Debug", "🟠 Frontend: Chrome (localhost:4200)"],
+      "stopAll": true
     }
   ]
 }

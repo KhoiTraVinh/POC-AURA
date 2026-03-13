@@ -41,6 +41,19 @@
       "presentation": { "reveal": "always", "panel": "shared" }
     },
     {
+      "label": "build: backend",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "/workspace/backend/POC.AURA.Api/POC.AURA.Api.csproj",
+        "--configuration", "Debug"
+      ],
+      "group": "build",
+      "problemMatcher": "$msCompile",
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
       "label": "run: backend (dotnet watch)",
       "type": "shell",
       "command": "cd /workspace/backend && DOTNET_USE_POLLING_FILE_WATCHER=true dotnet watch run --project POC.AURA.Api/POC.AURA.Api.csproj --urls http://0.0.0.0:5000",
