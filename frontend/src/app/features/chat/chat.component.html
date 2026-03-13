@@ -10,9 +10,10 @@
 
       <form (ngSubmit)="join()" class="login-form">
         <div class="input-group">
-          <label for="username">Username</label>
+          <label for="username">Username Test</label>
           <input
             id="username"
+            name="username"
             type="text"
             [ngModel]="usernameInput()"
             (ngModelChange)="usernameInput.set($event)"
