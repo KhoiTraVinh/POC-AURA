@@ -43,7 +43,7 @@ services:
       dockerfile: Dockerfile
     container_name: poc-aura-workspace
     volumes:
-      - ..:/workspace:cached
+      - .:/workspace:cached
       - workspace-node-modules:/workspace/frontend/node_modules
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
