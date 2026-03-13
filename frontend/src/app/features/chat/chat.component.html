@@ -5,7 +5,7 @@
       <div class="login-logo">
         <div class="logo-icon">⚡</div>
         <h1>POC AURA</h1>
-        <p>Real-time SignalR Demo</p>
+        <p>Real-time SignalR API Demo</p>
       </div>
 
       <form (ngSubmit)="join()" class="login-form">
@@ -22,16 +22,26 @@
             autofocus
           />
         </div>
+        <div class="input-group">
+          <label for="group">Group ID</label>
+          <input
+            id="group"
+            name="group"
+            type="number"
+            [ngModel]="groupId()"
+            (ngModelChange)="groupId.set($event)"
+            autocomplete="off"
+          />
+        </div>
         <button type="submit" [disabled]="!usernameInput().trim()" class="btn-primary">
           Join Chat
         </button>
       </form>
 
       <div class="tech-badges">
-        <span class="badge">.NET 8</span>
+        <span class="badge">.NET 8 REST</span>
         <span class="badge">Angular 19</span>
-        <span class="badge">SignalR</span>
-        <span class="badge">Docker</span>
+        <span class="badge">SignalR Notifications</span>
       </div>
     </div>
   </div>
@@ -46,7 +56,7 @@
         <div class="logo-sm">⚡</div>
         <div>
           <h2>POC AURA Chat</h2>
-          <span class="subtitle">SignalR Real-time Demo</span>
+          <span class="subtitle">Group {{ groupId() }}</span>
         </div>
       </div>
 
@@ -73,51 +83,39 @@
       @if (messages().length === 0) {
         <div class="empty-state">
           <div class="empty-icon">💬</div>
-          <p>No messages yet. Start the conversation!</p>
+          <p>No messages yet in Group {{ groupId() }}.</p>
         </div>
       }
 
-      @for (msg of messages(); track msg.timestamp + msg.user) {
+      @for (msg of messages(); track msg.id) {
         <div class="message-wrapper" [class.own]="isOwnMessage(msg)">
           @if (!isOwnMessage(msg)) {
-            <div class="message-avatar">{{ msg.user.charAt(0).toUpperCase() }}</div>
+            <div class="message-avatar">U</div>
           }
           <div class="message-bubble">
             @if (!isOwnMessage(msg)) {
-              <span class="message-author">{{ msg.user }}</span>
+              <span class="message-author">User</span>
             }
-            <p class="message-text">{{ msg.message }}</p>
-            <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+            <p class="message-text">{{ msg.ref }}</p>
+            <span class="message-time">
+              {{ formatTime(msg.createdAt) }}
+              
+              <!-- Read Receipt Indicator -->
+              @if (msg.id <= (latestReadReceptId() || 0)) {
+                  <small style="color: #6366f1; margin-left: 5px;">✓✓ Đã xem</small>
+              }
+            </span>
           </div>
-        </div>
-      }
-
-      <!-- Typing indicator -->
-      @if (typingUsersArray().length > 0) {
-        <div class="typing-indicator">
-          <div class="typing-dots">
-            <span></span><span></span><span></span>
-          </div>
-          <span class="typing-text">
-            {{ typingUsersArray().join(', ') }} {{ typingUsersArray().length === 1 ? 'is' : 'are' }} typing...
-          </span>
         </div>
       }
     </main>
-
-    <!-- Connection ID debug info -->
-    @if (connectionId()) {
-      <div class="debug-bar">
-        <span>Connection ID: <code>{{ connectionId() }}</code></span>
-      </div>
-    }
 
     <!-- Input -->
     <footer class="input-area">
       <div class="input-wrapper">
         <textarea
           [ngModel]="messageInput()"
-          (ngModelChange)="messageInput.set($event); onTyping()"
+          (ngModelChange)="messageInput.set($event)"
           (keydown)="onKeyDown($event)"
           placeholder="Type a message... (Enter to send)"
           rows="1"

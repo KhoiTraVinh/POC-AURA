@@ -9,12 +9,12 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { Subject, takeUntil, debounceTime, distinctUntilChanged } from 'rxjs';
-import { SignalRService, ConnectionStatus } from '../../core/services/signalr.service';
-import { ChatMessage } from '../../core/models/chat-message.model';
+import { Subject, takeUntil } from 'rxjs';
+import { ChatService, MessageDto } from '../../core/services/chat.service';
 
 @Component({
   selector: 'app-chat',
+  standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './chat.component.html',
   styleUrl: './chat.component.scss',
@@ -23,30 +23,25 @@ export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('messagesContainer') messagesContainer!: ElementRef<HTMLDivElement>;
 
   readonly username = signal('');
+  readonly groupId = signal<number>(1); // Hardcoded to 1 for POC
   readonly messageInput = signal('');
-  readonly messages = signal<ChatMessage[]>([]);
-  readonly typingUsers = signal<Set<string>>(new Set());
-  readonly connectionStatus = signal<ConnectionStatus>('disconnected');
-  readonly connectionId = signal<string | null>(null);
+  readonly messages = signal<MessageDto[]>([]);
+  readonly connectionStatus = signal<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   readonly isJoined = signal(false);
   readonly usernameInput = signal('');
+  
+  // Track read receipts mapping messageId -> user
+  private latestReadReceiptsMap = new Map<number, number>();
+  readonly latestReadReceptId = signal<number | null>(null);
 
-  readonly typingUsersArray = computed(() => [...this.typingUsers()]);
   readonly isConnected = computed(() => this.connectionStatus() === 'connected');
 
   private readonly destroy$ = new Subject<void>();
-  private readonly typingSubject$ = new Subject<boolean>();
 
-  constructor(private readonly signalR: SignalRService) {}
+  constructor(private readonly chatService: ChatService) {}
 
   ngOnInit(): void {
-    this.typingSubject$
-      .pipe(debounceTime(500), distinctUntilChanged(), takeUntil(this.destroy$))
-      .subscribe((isTyping) => {
-        if (this.isJoined()) {
-          this.signalR.sendTyping(this.username(), isTyping);
-        }
-      });
+      // Intentionally left blank, waiting for user to click Join
   }
 
   async join(): Promise<void> {
@@ -55,59 +50,64 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.username.set(name);
 
-    this.signalR.connectionStatus$
-      .pipe(takeUntil(this.destroy$))
-      .subscribe((status) => this.connectionStatus.set(status));
-
-    this.signalR.connectionId$
-      .pipe(takeUntil(this.destroy$))
-      .subscribe((id) => this.connectionId.set(id));
-
-    this.signalR.messageHistory$
+    this.chatService.messages$
       .pipe(takeUntil(this.destroy$))
       .subscribe((history) => {
         this.messages.set(history);
         this.scrollToBottom();
+        this.markLatestAsRead();
       });
 
-    this.signalR.messages$
+    this.chatService.readReceipts$
       .pipe(takeUntil(this.destroy$))
-      .subscribe((msg) => {
-        this.messages.update((msgs) => [...msgs, msg]);
-        this.scrollToBottom();
-      });
-
-    this.signalR.userTyping$
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(({ user, isTyping }) => {
-        this.typingUsers.update((set) => {
-          const updated = new Set(set);
-          if (isTyping) updated.add(user);
-          else updated.delete(user);
-          return updated;
-        });
+      .subscribe((receipt) => {
+          if(receipt) {
+             this.latestReadReceiptsMap.set(receipt.messageId, receipt.staffId);
+             this.latestReadReceptId.set(receipt.messageId); 
+          }
       });
 
     try {
-      await this.signalR.connect();
+      await this.chatService.startConnection(this.groupId());
       this.isJoined.set(true);
+      this.connectionStatus.set('connected');
     } catch {
       this.connectionStatus.set('error');
     }
   }
 
-  async send(): Promise<void> {
+  send(): void {
     const msg = this.messageInput().trim();
     if (!msg || !this.isConnected()) return;
 
-    await this.signalR.sendMessage(this.username(), msg);
-    this.messageInput.set('');
-    this.typingSubject$.next(false);
+    this.chatService.sendMessage({
+      groupId: this.groupId(),
+      type: 'Text',
+      ref: msg
+    }).subscribe({
+      next: (sentMsg) => {
+        this.messageInput.set('');
+        // The message will be updated via SignalR notification -> GET API roundtrip.
+        // We can optionally add it proactively, but listening to the pipe is safer for consistency.
+      },
+      error: (err) => console.error("Could not send message", err)
+    });
   }
 
-  onTyping(): void {
-    this.typingSubject$.next(true);
-    setTimeout(() => this.typingSubject$.next(false), 2000);
+  markLatestAsRead(): void {
+      const msgs = this.messages();
+      if(msgs.length === 0) return;
+      
+      const lastMsgId = msgs[msgs.length - 1].id;
+      
+      // Simulate a Staff ID lookup based on string username for POC
+      const staffIdMock = this.username().length; 
+
+      this.chatService.markAsRead({
+          groupId: this.groupId(),
+          lastReadMessageId: lastMsgId,
+          staffId: staffIdMock
+      }).subscribe();
   }
 
   onKeyDown(event: KeyboardEvent): void {
@@ -117,8 +117,11 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
   }
 
-  isOwnMessage(msg: ChatMessage): boolean {
-    return msg.user === this.username();
+  isOwnMessage(msg: MessageDto): boolean {
+    // Basic mock logic: In a real app we'd compare StaffIds. Here we check text for demonstration if possible
+    // Using Ref is tricky, let's just pretend all messages aren't 'Own' for now, or match on string matching 'type' if we hacked it.
+    // For this POC let's just return false unless we persist UserNames to the DB.
+    return false; 
   }
 
   formatTime(timestamp: string): string {
@@ -140,6 +143,6 @@ export class ChatComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-    this.signalR.disconnect();
+    this.chatService.stopConnection(this.groupId());
   }
 }

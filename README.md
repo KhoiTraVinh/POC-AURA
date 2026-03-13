@@ -145,73 +145,30 @@ docker compose -f docker-compose.dev.yml up --build --profile standalone
 
 ---
 
-## Debug với VS Code
+## Kiến trúc Chat (REST + SignalR)
 
-### Backend (.NET)
+Dự án hiện sử dụng kiến trúc **API-First kết hợp SignalR Notification** (Tương tự Zalo/Messenger):
+1. **Gửi tin nhắn**: Gọi REST API (`POST /api/messages`).
+2. **Real-time**: SignalR Server chỉ đóng vai trò broadcast **Notification** (chỉ chứa `MessageId`) đến các Client trong Group.
+3. **Hiển thị**: Client nhận notification -> Gọi `GET` API lấy riêng tin nhắn đó về để hiển thị.
+4. **Offline/Disconnect**: Khi mạng rớt và có lại, Client gọi API lấy list tin nhắn bị *miss* trong khoảng thời gian mất mạng (dựa vào `afterMessageId`).
 
-1. Đảm bảo đang trong Dev Container (container `workspace` đang chạy)
-2. **Run & Debug** (`Ctrl+Shift+D`) → chọn `🔵 Backend: Attach (Docker)` → F5
-3. Chọn process `POC.AURA.Api` trong popup
-4. Đặt breakpoint trong file `.cs` → trigger từ browser
+### SignalR Hub — Events (Hubs/chat)
 
-### Frontend (Angular)
+| Event (Server → Client)  | Mô tả                                                           |
+|--------------------------|-----------------------------------------------------------------|
+| `NewMessageNotification` | Có tin nhắn mới trong Group (Payload: `MessageId`)              |
+| `UserReadReceipt`        | Thông báo một user đã xem tin nhắn (Payload: `staffId`, `msgId`)|
 
-- Chọn `🟠 Frontend: Chrome (localhost:4200)` → F5
-- Đặt breakpoint trong file `.ts`
+| Event (Client → Server) | Mô tả                                         |
+|-------------------------|-----------------------------------------------|
+| `JoinGroup(groupId)`    | Tham gia vào một kênh chat cụ thể             |
+| `LeaveGroup(groupId)`   | Rời khỏi kênh chat                            |
 
-### Full Stack
+### REST API Endpoints
 
-- Chọn `🚀 Full Stack Debug` → F5
-
----
-
-## Database — SQL Server 2022
-
-| Thông tin | Giá trị                                              |
-|-----------|------------------------------------------------------|
-| Host      | `localhost` (từ máy) / `sqlserver` (trong Docker network) |
-| Port      | `1433`                                               |
-| Database  | `PocAuraDb`                                          |
-| Username  | `sa`                                                 |
-| Password  | `Aura@Poc2024!`                                      |
-
-> Migration tự động chạy khi backend khởi động (`db.Database.Migrate()`).
-
-### Tạo migration mới
-
-```bash
-# Chạy trong terminal của Dev Container
-cd /workspace/backend
-dotnet ef migrations add <TênMigration> --project POC.AURA.Api
-```
-
----
-
-## CloudBeaver — Web DB Manager
-
-1. Truy cập http://localhost:8978
-2. Lần đầu: tạo admin account theo wizard
-3. Tạo connection mới → **SQL Server**:
-   - Host: `sqlserver`
-   - Port: `1433`
-   - Database: `PocAuraDb`
-   - Username: `sa`
-   - Password: `Aura@Poc2024!`
-
----
-
-## SignalR Hub — Events
-
-| Event (Server → Client)  | Mô tả                          |
-|--------------------------|--------------------------------|
-| `Connected`              | Trả về connectionId            |
-| `MessageHistory`         | Lịch sử 100 tin nhắn gần nhất  |
-| `ReceiveMessage`         | Tin nhắn mới từ bất kỳ user    |
-| `UserConnected`          | User mới kết nối               |
-| `UserDisconnected`       | User ngắt kết nối              |
-| `UserTyping`             | Trạng thái đang gõ             |
-
-| Event (Client → Server) | Mô tả               |
-|-------------------------|---------------------|
-| `SendMessage`           | Gửi tin nhắn        |
-| `SendTyping`            | Báo đang gõ         |
+| HTTP Method | Endpoint               | Chức năng                               |
+|-------------|------------------------|-----------------------------------------|
+| `GET`       | `/api/messages/{id}`   | Lấy lịch sử tin nhắn (hỗ trợ `afterId`) |
+| `POST`      | `/api/messages`        | Gửi tin nhắn mới                        |
+| `POST`      | `/api/messages/read`   | Đánh dấu tin nhắn đã đọc (Read Receipt) |

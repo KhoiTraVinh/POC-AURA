@@ -18,14 +18,13 @@ public class ChatHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task SendMessage(string user, string message)
+    public async Task JoinGroup(int groupId)
     {
-        
-        await Clients.All.SendAsync("ReceiveMessage");
+        await Groups.AddToGroupAsync(Context.ConnectionId, groupId.ToString());
     }
 
-    public async Task SendTyping(string user, bool isTyping)
+    public async Task LeaveGroup(int groupId)
     {
-        await Clients.Others.SendAsync("UserTyping", new { user, isTyping });
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupId.ToString());
     }
 }
