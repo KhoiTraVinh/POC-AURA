@@ -41,7 +41,31 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
+    try
+    {
+        // Retry vì SQL Server container có thể chưa sẵn sàng ngay
+        var retries = 5;
+        while (retries-- > 0)
+        {
+            try
+            {
+                db.Database.Migrate();
+                logger.LogInformation("Database migration completed.");
+                break;
+            }
+            catch when (retries > 0)
+            {
+                logger.LogWarning("Database not ready, retrying in 3s... ({Retries} left)", retries);
+                await Task.Delay(3000);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Migration failed. Drop and recreate the database volume to reset.");
+        throw;
+    }
 }
 
 if (app.Environment.IsDevelopment())
