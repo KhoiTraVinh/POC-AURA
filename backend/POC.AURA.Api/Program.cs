@@ -42,29 +42,38 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
-    try
+
+    // Retry vì SQL Server container có thể chưa sẵn sàng ngay
+    var retries = 5;
+    while (retries-- > 0)
     {
-        // Retry vì SQL Server container có thể chưa sẵn sàng ngay
-        var retries = 5;
-        while (retries-- > 0)
+        try
         {
-            try
+            db.Database.Migrate();
+            logger.LogInformation("Database migration completed.");
+            break;
+        }
+        catch (Exception ex) when (retries > 0)
+        {
+            logger.LogWarning("Migration failed ({Retries} retries left): {Message}", retries, ex.Message);
+            await Task.Delay(3000);
+        }
+        catch (Exception ex)
+        {
+            if (app.Environment.IsDevelopment())
             {
+                // Dev only: DB state bị lệch → xóa và tạo lại
+                logger.LogWarning("Migration failed in dev mode, resetting database: {Message}", ex.Message);
+                db.Database.EnsureDeleted();
                 db.Database.Migrate();
-                logger.LogInformation("Database migration completed.");
-                break;
+                logger.LogInformation("Database reset and migrated successfully.");
             }
-            catch when (retries > 0)
+            else
             {
-                logger.LogWarning("Database not ready, retrying in 3s... ({Retries} left)", retries);
-                await Task.Delay(3000);
+                logger.LogError(ex, "Migration failed.");
+                throw;
             }
         }
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Migration failed. Drop and recreate the database volume to reset.");
-        throw;
     }
 }
 
