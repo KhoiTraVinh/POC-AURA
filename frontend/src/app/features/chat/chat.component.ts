@@ -10,7 +10,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { Subject, takeUntil } from 'rxjs';
-import { ChatService, MessageDto } from '../../core/services/chat.service';
+import { ChatService, ConnectionStatus, MessageDto, SyncStatus } from '../../core/services/chat.service';
 
 @Component({
   selector: 'app-chat',
@@ -23,14 +23,16 @@ export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('messagesContainer') messagesContainer!: ElementRef<HTMLDivElement>;
 
   readonly username = signal('');
-  readonly groupId = signal<number>(1); // Hardcoded to 1 for POC
+  readonly staffIdInput = signal<number>(1);
+  readonly groupId = signal<number>(1);
   readonly messageInput = signal('');
   readonly messages = signal<MessageDto[]>([]);
-  readonly connectionStatus = signal<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  readonly connectionStatus = signal<ConnectionStatus>('disconnected');
+  readonly syncStatus = signal<SyncStatus>({ syncing: false, count: 0 });
   readonly isJoined = signal(false);
   readonly usernameInput = signal('');
-  
-  // Track read receipts mapping messageId -> user
+
+  // Track read receipts
   private latestReadReceiptsMap = new Map<number, number>();
   readonly latestReadReceptId = signal<number | null>(null);
 
@@ -41,7 +43,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   constructor(private readonly chatService: ChatService) {}
 
   ngOnInit(): void {
-      // Intentionally left blank, waiting for user to click Join
+    // Intentionally left blank, waiting for user to click Join
   }
 
   async join(): Promise<void> {
@@ -55,24 +57,34 @@ export class ChatComponent implements OnInit, OnDestroy {
       .subscribe((history) => {
         this.messages.set(history);
         this.scrollToBottom();
-        this.markLatestAsRead();
       });
 
     this.chatService.readReceipts$
       .pipe(takeUntil(this.destroy$))
       .subscribe((receipt) => {
-          if(receipt) {
-             this.latestReadReceiptsMap.set(receipt.messageId, receipt.staffId);
-             this.latestReadReceptId.set(receipt.messageId); 
-          }
+        if (receipt) {
+          this.latestReadReceiptsMap.set(receipt.messageId, receipt.staffId);
+          this.latestReadReceptId.set(receipt.messageId);
+        }
+      });
+
+    this.chatService.connectionStatus$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((status) => {
+        this.connectionStatus.set(status);
+      });
+
+    this.chatService.syncStatus$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((sync) => {
+        this.syncStatus.set(sync);
       });
 
     try {
-      await this.chatService.startConnection(this.groupId());
+      await this.chatService.startConnection(this.groupId(), this.staffIdInput());
       this.isJoined.set(true);
-      this.connectionStatus.set('connected');
     } catch {
-      this.connectionStatus.set('error');
+      // connectionStatus$ sẽ tự emit 'disconnected'
     }
   }
 
@@ -85,29 +97,21 @@ export class ChatComponent implements OnInit, OnDestroy {
       type: 'Text',
       ref: msg
     }).subscribe({
-      next: (sentMsg) => {
+      next: () => {
         this.messageInput.set('');
-        // The message will be updated via SignalR notification -> GET API roundtrip.
-        // We can optionally add it proactively, but listening to the pipe is safer for consistency.
       },
-      error: (err) => console.error("Could not send message", err)
+      error: (err) => console.error('Could not send message', err)
     });
   }
 
-  markLatestAsRead(): void {
-      const msgs = this.messages();
-      if(msgs.length === 0) return;
-      
-      const lastMsgId = msgs[msgs.length - 1].id;
-      
-      // Simulate a Staff ID lookup based on string username for POC
-      const staffIdMock = this.username().length; 
+  // Mô phỏng token hết hạn / mất mạng — hub tự auto-leave group
+  async disconnect(): Promise<void> {
+    await this.chatService.forceDisconnect();
+  }
 
-      this.chatService.markAsRead({
-          groupId: this.groupId(),
-          lastReadMessageId: lastMsgId,
-          staffId: staffIdMock
-      }).subscribe();
+  // Kết nối lại — tự động fetch messages bị miss bằng pointer từ server
+  async reconnect(): Promise<void> {
+    await this.chatService.reconnect();
   }
 
   onKeyDown(event: KeyboardEvent): void {
@@ -117,18 +121,20 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
   }
 
-  isOwnMessage(msg: MessageDto): boolean {
-    // Basic mock logic: In a real app we'd compare StaffIds. Here we check text for demonstration if possible
-    // Using Ref is tricky, let's just pretend all messages aren't 'Own' for now, or match on string matching 'type' if we hacked it.
-    // For this POC let's just return false unless we persist UserNames to the DB.
-    return false; 
-  }
-
   formatTime(timestamp: string): string {
     return new Date(timestamp).toLocaleTimeString('vi-VN', {
       hour: '2-digit',
       minute: '2-digit',
     });
+  }
+
+  connectionStatusLabel(): string {
+    switch (this.connectionStatus()) {
+      case 'connected': return 'Connected';
+      case 'connecting': return 'Connecting...';
+      case 'reconnecting': return 'Reconnecting...';
+      default: return 'Disconnected';
+    }
   }
 
   private scrollToBottom(): void {
@@ -143,6 +149,6 @@ export class ChatComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-    this.chatService.stopConnection(this.groupId());
+    this.chatService.stopConnection();
   }
 }

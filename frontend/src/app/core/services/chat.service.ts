@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import * as signalR from '@microsoft/signalr';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, firstValueFrom, Observable } from 'rxjs';
 
 export interface MessageDto {
   id: number;
@@ -23,100 +23,183 @@ export interface MarkReadRequest {
   staffId: number;
 }
 
+export interface ReadReceiptDto {
+  groupId: number;
+  staffId: number;
+  lastReadMessageId: number | null;
+}
+
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+export interface SyncStatus {
+  syncing: boolean;
+  count: number;
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class ChatService {
   private hubConnection: signalR.HubConnection | undefined;
-  private readonly apiUrl = '/api/messages'; 
+  private readonly apiUrl = '/api/messages';
   private readonly hubUrl = '/hubs/chat';
 
   // State
   private messagesSubject = new BehaviorSubject<MessageDto[]>([]);
   public messages$ = this.messagesSubject.asObservable();
 
-  private readReceiptsSubject = new BehaviorSubject<{staffId: number, messageId: number} | null>(null);
+  private readReceiptsSubject = new BehaviorSubject<{ staffId: number; messageId: number } | null>(null);
   public readReceipts$ = this.readReceiptsSubject.asObservable();
 
-  constructor(private http: HttpClient) { }
+  // Connection status để UI hiển thị trạng thái kết nối
+  private connectionStatusSubject = new BehaviorSubject<ConnectionStatus>('disconnected');
+  public connectionStatus$ = this.connectionStatusSubject.asObservable();
 
-  public async startConnection(groupId: number): Promise<void> {
+  // Sync status khi đang fetch messages bị miss sau reconnect
+  private syncStatusSubject = new BehaviorSubject<SyncStatus>({ syncing: false, count: 0 });
+  public syncStatus$ = this.syncStatusSubject.asObservable();
+
+  // Context hiện tại — dùng lại khi reconnect thủ công
+  private currentGroupId: number | null = null;
+  private currentStaffId: number | null = null;
+
+  constructor(private http: HttpClient) {}
+
+  public async startConnection(groupId: number, staffId: number): Promise<void> {
+    this.currentGroupId = groupId;
+    this.currentStaffId = staffId;
+    this.connectionStatusSubject.next('connecting');
+
     this.hubConnection = new signalR.HubConnectionBuilder()
       .withUrl(this.hubUrl)
       .withAutomaticReconnect()
       .build();
 
-    // Reconnect logic: Fetch missing messages when reconnected
-    this.hubConnection.onreconnected(() => {
-      console.log('SignalR Reconnected.');
-      this.fetchMissingMessages(groupId);
+    // Đang reconnect tự động (do mất mạng tạm thời)
+    this.hubConnection.onreconnecting(() => {
+      this.connectionStatusSubject.next('reconnecting');
     });
 
-    // Listen to new messages
-    this.hubConnection.on('NewMessageNotification', (messageId: number) => {
-      console.log('New message received via SignalR:', messageId);
-      this.fetchMissingMessages(groupId);
+    // Reconnect tự động thành công — dùng pointer từ server để fetch messages bị miss
+    this.hubConnection.onreconnected(async () => {
+      this.connectionStatusSubject.next('connected');
+      await this.fetchMissingMessages();
     });
 
-    // Listen to read receipts
-    this.hubConnection.on('UserReadReceipt', (data: { staffId: number, messageId: number }) => {
-      console.log('Read receipt received:', data);
+    // Connection đóng hẳn
+    this.hubConnection.onclose(() => {
+      this.connectionStatusSubject.next('disconnected');
+    });
+
+    // Nhận tín hiệu "có message mới" → gọi API lấy data (không dùng payload của signal)
+    this.hubConnection.on('NewMessageNotification', () => {
+      this.fetchMissingMessages();
+    });
+
+    // Nhận read receipt từ client khác trong cùng group
+    this.hubConnection.on('UserReadReceipt', (data: { staffId: number; messageId: number }) => {
       this.readReceiptsSubject.next(data);
     });
 
     try {
       await this.hubConnection.start();
-      console.log('SignalR Connected.');
       await this.hubConnection.invoke('JoinGroup', groupId);
-      
-      // Load initial messages
-      await this.loadInitialMessages(groupId);
+      this.connectionStatusSubject.next('connected');
+
+      // Load messages từ pointer trên server (bao gồm messages bị miss trước đó)
+      await this.fetchMissingMessages();
     } catch (err) {
-      console.error('Error while starting SignalR connection: ' + err);
+      this.connectionStatusSubject.next('disconnected');
+      console.error('Error while starting SignalR connection:', err);
+      throw err;
     }
   }
 
-  public async stopConnection(groupId: number): Promise<void> {
+  // Dừng kết nối bình thường — gọi LeaveGroup trước
+  public async stopConnection(): Promise<void> {
     if (this.hubConnection) {
       try {
-        await this.hubConnection.invoke('LeaveGroup', groupId);
+        if (this.currentGroupId !== null) {
+          await this.hubConnection.invoke('LeaveGroup', this.currentGroupId);
+        }
         await this.hubConnection.stop();
-        this.messagesSubject.next([]); // Clear messages state
       } catch (err) {
-        console.error(err);
+        console.error('Error stopping connection:', err);
+      } finally {
+        this.connectionStatusSubject.next('disconnected');
+        this.messagesSubject.next([]);
+        this.currentGroupId = null;
+        this.currentStaffId = null;
       }
     }
   }
 
-  // HTTP API Calls
-  private async loadInitialMessages(groupId: number): Promise<void> {
-    this.http.get<MessageDto[]>(`${this.apiUrl}/${groupId}`).subscribe({
-      next: (messages) => this.messagesSubject.next(messages),
-      error: (err) => console.error('Failed to load initial messages', err)
-    });
+  // Ngắt kết nối thủ công — mô phỏng token hết hạn / mất mạng
+  // Hub sẽ tự auto-leave qua OnDisconnectedAsync, không cần gọi LeaveGroup
+  public async forceDisconnect(): Promise<void> {
+    if (this.hubConnection) {
+      try {
+        await this.hubConnection.stop();
+      } catch (err) {
+        console.error('Error during force disconnect:', err);
+      }
+    }
+    this.connectionStatusSubject.next('disconnected');
   }
 
-  private fetchMissingMessages(groupId: number): void {
-    const currentMessages = this.messagesSubject.value;
-    let afterMessageId = undefined;
-    
-    if (currentMessages.length > 0) {
-      afterMessageId = currentMessages[currentMessages.length - 1].id;
-    }
+  // Kết nối lại sau khi bị ngắt thủ công
+  public async reconnect(): Promise<void> {
+    if (this.currentGroupId === null || this.currentStaffId === null) return;
+    await this.startConnection(this.currentGroupId, this.currentStaffId);
+  }
 
-    let url = `${this.apiUrl}/${groupId}`;
-    if (afterMessageId) {
-      url += `?afterMessageId=${afterMessageId}`;
-    }
+  // Lấy pointer bền vững từ server (ReadReceipt.LastReadMessageId) rồi fetch messages mới hơn
+  // Không dùng in-memory vì sẽ bị mất khi token refresh / component destroy
+  private async fetchMissingMessages(): Promise<void> {
+    if (this.currentGroupId === null || this.currentStaffId === null) return;
 
-    this.http.get<MessageDto[]>(url).subscribe({
-      next: (newMessages) => {
-        if (newMessages.length > 0) {
-          this.messagesSubject.next([...currentMessages, ...newMessages]);
-        }
-      },
-      error: (err) => console.error('Failed to fetch missing messages', err)
-    });
+    try {
+      const receipt = await firstValueFrom(
+        this.http.get<ReadReceiptDto>(
+          `${this.apiUrl}/receipt?groupId=${this.currentGroupId}&staffId=${this.currentStaffId}`
+        )
+      );
+
+      const pointer = receipt.lastReadMessageId;
+      let url = `${this.apiUrl}/${this.currentGroupId}`;
+      if (pointer !== null && pointer !== undefined) {
+        url += `?afterMessageId=${pointer}`;
+      }
+
+      const newMessages = await firstValueFrom(
+        this.http.get<MessageDto[]>(url)
+      );
+
+      if (newMessages.length > 0) {
+        this.syncStatusSubject.next({ syncing: true, count: newMessages.length });
+
+        // Merge với messages hiện có, loại trùng lặp
+        const current = this.messagesSubject.value;
+        const existingIds = new Set(current.map(m => m.id));
+        const unique = newMessages.filter(m => !existingIds.has(m.id));
+        this.messagesSubject.next([...current, ...unique]);
+
+        // Cập nhật pointer lên message mới nhất
+        const maxId = Math.max(...newMessages.map(m => m.id));
+        this.markAsRead({
+          groupId: this.currentGroupId!,
+          staffId: this.currentStaffId!,
+          lastReadMessageId: maxId
+        }).subscribe({
+          error: (err) => console.error('Failed to update pointer:', err)
+        });
+
+        // Ẩn sync banner sau 2 giây
+        setTimeout(() => this.syncStatusSubject.next({ syncing: false, count: 0 }), 2000);
+      }
+    } catch (err) {
+      console.error('Failed to fetch missing messages:', err);
+    }
   }
 
   public sendMessage(request: SendMessageRequest): Observable<MessageDto> {

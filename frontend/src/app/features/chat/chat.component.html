@@ -10,28 +10,45 @@
 
       <form (ngSubmit)="join()" class="login-form">
         <div class="input-group">
-          <label for="username">Username Test</label>
+          <label for="username">Username</label>
           <input
             id="username"
             name="username"
             type="text"
             [ngModel]="usernameInput()"
             (ngModelChange)="usernameInput.set($event)"
-            placeholder="Enter your username..."
+            placeholder="Nhập username..."
             autocomplete="off"
             autofocus
           />
         </div>
-        <div class="input-group">
-          <label for="group">Group ID</label>
-          <input
-            id="group"
-            name="group"
-            type="number"
-            [ngModel]="groupId()"
-            (ngModelChange)="groupId.set($event)"
-            autocomplete="off"
-          />
+        <div class="input-row">
+          <div class="input-group">
+            <label for="staffId">Staff ID</label>
+            <input
+              id="staffId"
+              name="staffId"
+              type="number"
+              [ngModel]="staffIdInput()"
+              (ngModelChange)="staffIdInput.set(+$event)"
+              placeholder="1"
+              autocomplete="off"
+              min="1"
+            />
+          </div>
+          <div class="input-group">
+            <label for="group">Group ID</label>
+            <input
+              id="group"
+              name="group"
+              type="number"
+              [ngModel]="groupId()"
+              (ngModelChange)="groupId.set(+$event)"
+              placeholder="1"
+              autocomplete="off"
+              min="1"
+            />
+          </div>
         </div>
         <button type="submit" [disabled]="!usernameInput().trim()" class="btn-primary">
           Join Chat
@@ -41,7 +58,7 @@
       <div class="tech-badges">
         <span class="badge">.NET 8 REST</span>
         <span class="badge">Angular 19</span>
-        <span class="badge">SignalR Notifications</span>
+        <span class="badge">SignalR Signal-Only</span>
       </div>
     </div>
   </div>
@@ -56,20 +73,28 @@
         <div class="logo-sm">⚡</div>
         <div>
           <h2>POC AURA Chat</h2>
-          <span class="subtitle">Group {{ groupId() }}</span>
+          <span class="subtitle">Group {{ groupId() }} · Staff #{{ staffIdInput() }}</span>
         </div>
       </div>
 
       <div class="header-right">
+        <!-- Connection Status Badge -->
         <div class="connection-badge" [class]="connectionStatus()">
           <span class="dot"></span>
-          @switch (connectionStatus()) {
-            @case ('connected') { Connected }
-            @case ('connecting') { Reconnecting... }
-            @case ('error') { Error }
-            @default { Disconnected }
-          }
+          {{ connectionStatusLabel() }}
         </div>
+
+        <!-- Disconnect / Reconnect buttons để mô phỏng token hết hạn -->
+        @if (connectionStatus() === 'connected') {
+          <button class="btn-disconnect" (click)="disconnect()" title="Mô phỏng token hết hạn / mất mạng">
+            Ngắt kết nối
+          </button>
+        }
+        @if (connectionStatus() === 'disconnected') {
+          <button class="btn-reconnect" (click)="reconnect()">
+            Kết nối lại
+          </button>
+        }
 
         <div class="user-info">
           <span class="user-avatar">{{ username().charAt(0).toUpperCase() }}</span>
@@ -78,31 +103,40 @@
       </div>
     </header>
 
+    <!-- Sync Banner — hiện khi đang fetch messages bị miss -->
+    @if (syncStatus().syncing) {
+      <div class="sync-banner">
+        <span class="sync-spinner">⟳</span>
+        Đang đồng bộ {{ syncStatus().count }} tin nhắn bị miss...
+      </div>
+    }
+
+    <!-- Reconnecting Banner -->
+    @if (connectionStatus() === 'reconnecting') {
+      <div class="reconnecting-banner">
+        Đang kết nối lại... Tin nhắn sẽ được đồng bộ sau khi kết nối thành công.
+      </div>
+    }
+
     <!-- Messages -->
     <main class="messages-area" #messagesContainer>
       @if (messages().length === 0) {
         <div class="empty-state">
           <div class="empty-icon">💬</div>
-          <p>No messages yet in Group {{ groupId() }}.</p>
+          <p>Chưa có tin nhắn trong Group {{ groupId() }}.</p>
+          <small>Mở nhiều tab và join cùng groupId để mô phỏng nhiều clients.</small>
         </div>
       }
 
       @for (msg of messages(); track msg.id) {
-        <div class="message-wrapper" [class.own]="isOwnMessage(msg)">
-          @if (!isOwnMessage(msg)) {
-            <div class="message-avatar">U</div>
-          }
+        <div class="message-wrapper">
+          <div class="message-avatar">U</div>
           <div class="message-bubble">
-            @if (!isOwnMessage(msg)) {
-              <span class="message-author">User</span>
-            }
             <p class="message-text">{{ msg.ref }}</p>
             <span class="message-time">
               {{ formatTime(msg.createdAt) }}
-              
-              <!-- Read Receipt Indicator -->
               @if (msg.id <= (latestReadReceptId() || 0)) {
-                  <small style="color: #6366f1; margin-left: 5px;">✓✓ Đã xem</small>
+                <small class="read-indicator">✓✓ Đã xem</small>
               }
             </span>
           </div>
@@ -117,7 +151,7 @@
           [ngModel]="messageInput()"
           (ngModelChange)="messageInput.set($event)"
           (keydown)="onKeyDown($event)"
-          placeholder="Type a message... (Enter to send)"
+          placeholder="Nhập tin nhắn... (Enter để gửi)"
           rows="1"
           [disabled]="!isConnected()"
         ></textarea>

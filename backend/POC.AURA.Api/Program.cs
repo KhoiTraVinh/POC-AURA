@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using POC.AURA.Api.Data;
+using POC.AURA.Api.Entities;
 using POC.AURA.Api.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -47,6 +48,18 @@ using (var scope = app.Services.CreateScope())
         {
             db.Database.Migrate();
             logger.LogInformation("Database migration completed.");
+
+            // Seed Group mẫu để demo (idempotent)
+            if (!db.Groups.Any())
+            {
+                db.Groups.AddRange(
+                    new Group { GroupName = "Demo Group 1", CreatedAt = DateTime.UtcNow },
+                    new Group { GroupName = "Demo Group 2", CreatedAt = DateTime.UtcNow }
+                );
+                db.SaveChanges();
+                logger.LogInformation("Seed data created: 2 demo groups.");
+            }
+
             break;
         }
         catch (Exception ex) when (retries > 0)

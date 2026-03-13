@@ -12,7 +12,9 @@ RUN dotnet publish POC.AURA.Api/POC.AURA.Api.csproj -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
+RUN apt-get update && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && adduser --disabled-password --gecos "" appuser && chown -R appuser /app
 USER appuser
 
 COPY --from=build /app/publish .

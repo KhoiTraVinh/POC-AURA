@@ -22,3 +22,11 @@ public class MarkReadRequest
     public int LastReadMessageId { get; set; }
     public int StaffId { get; set; } // Currently hardcoded/passed for POC from frontend
 }
+
+// Trả về pointer (LastReadMessageId) để client dùng khi kết nối / reconnect
+public class ReadReceiptDto
+{
+    public int GroupId { get; set; }
+    public int StaffId { get; set; }
+    public int? LastReadMessageId { get; set; }
+}

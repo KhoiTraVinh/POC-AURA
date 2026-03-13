@@ -190,8 +190,8 @@ $error: #ef4444;
   }
 
   &.connected { background: rgba($success, 0.1); color: $success; border-color: rgba($success, 0.3); .dot { background: $success; animation: pulse 2s infinite; } }
-  &.connecting { background: rgba($warning, 0.1); color: $warning; border-color: rgba($warning, 0.3); .dot { background: $warning; animation: spin 1s linear infinite; } }
-  &.error, &.disconnected { background: rgba($error, 0.1); color: $error; border-color: rgba($error, 0.3); .dot { background: $error; } }
+  &.connecting, &.reconnecting { background: rgba($warning, 0.1); color: $warning; border-color: rgba($warning, 0.3); .dot { background: $warning; animation: spin 1s linear infinite; } }
+  &.disconnected { background: rgba($error, 0.1); color: $error; border-color: rgba($error, 0.3); .dot { background: $error; } }
 }
 
 .user-info {
@@ -421,6 +421,89 @@ $error: #ef4444;
 
   &:hover:not(:disabled) { background: $primary-dark; }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
+}
+
+// Input row (2 inputs side by side)
+.input-row {
+  display: flex;
+  gap: 0.75rem;
+
+  .input-group { flex: 1; }
+}
+
+// Disconnect / Reconnect buttons
+.btn-disconnect {
+  padding: 0.3rem 0.75rem;
+  background: rgba($error, 0.1);
+  color: $error;
+  border: 1px solid rgba($error, 0.3);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover { background: rgba($error, 0.2); }
+}
+
+.btn-reconnect {
+  padding: 0.3rem 0.75rem;
+  background: rgba($success, 0.1);
+  color: $success;
+  border: 1px solid rgba($success, 0.3);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover { background: rgba($success, 0.2); }
+}
+
+// Sync banner — hiện khi đang đồng bộ messages bị miss
+.sync-banner {
+  padding: 0.5rem 1.5rem;
+  background: rgba($primary, 0.12);
+  border-bottom: 1px solid rgba($primary, 0.2);
+  color: $primary;
+  font-size: 0.82rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+
+  .sync-spinner {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+    font-size: 1rem;
+  }
+}
+
+// Reconnecting banner
+.reconnecting-banner {
+  padding: 0.5rem 1.5rem;
+  background: rgba($warning, 0.1);
+  border-bottom: 1px solid rgba($warning, 0.2);
+  color: $warning;
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+// Read indicator
+.read-indicator {
+  color: $primary;
+  margin-left: 5px;
+}
+
+// Empty state hint
+.empty-state small {
+  font-size: 0.78rem;
+  opacity: 0.6;
+  margin-top: 0.25rem;
+  display: block;
 }
 
 // Animations

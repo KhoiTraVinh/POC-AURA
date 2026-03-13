@@ -12,6 +12,21 @@ namespace POC.AURA.Api.Controllers;
 [Route("api/[controller]")]
 public class MessagesController(AppDbContext dbContext, IHubContext<ChatHub> hubContext) : ControllerBase
 {
+    // Lấy pointer (LastReadMessageId) hiện tại — client dùng khi connect lần đầu hoặc reconnect
+    [HttpGet("receipt")]
+    public async Task<IActionResult> GetReceipt([FromQuery] int groupId, [FromQuery] int staffId)
+    {
+        var receipt = await dbContext.ReadReceipts
+            .FirstOrDefaultAsync(r => r.GroupId == groupId && r.StaffId == staffId);
+
+        return Ok(new ReadReceiptDto
+        {
+            GroupId = groupId,
+            StaffId = staffId,
+            LastReadMessageId = receipt?.LastReadMessageId
+        });
+    }
+
     [HttpGet("{groupId}")]
     public async Task<IActionResult> GetMessages(int groupId, [FromQuery] int? afterMessageId)
     {
