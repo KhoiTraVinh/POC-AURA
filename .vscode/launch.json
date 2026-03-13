@@ -1,0 +1,70 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ─── Backend: Attach to running Docker container ───────────────────────
+    {
+      "name": "🔵 Backend: Attach (Docker)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickRemoteProcess}",
+      "pipeTransport": {
+        "pipeProgram": "docker",
+        "pipeArgs": ["exec", "-i", "poc-aura-backend-dev"],
+        "debuggerPath": "/vsdbg/vsdbg",
+        "pipeCwd": "${workspaceFolder}"
+      },
+      "sourceFileMap": {
+        "/app": "${workspaceFolder}/backend"
+      },
+      "justMyCode": true
+    },
+
+    // ─── Frontend: Chrome debugger ─────────────────────────────────────────
+    {
+      "name": "🟠 Frontend: Chrome (localhost:4200)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:4200",
+      "webRoot": "${workspaceFolder}/frontend/src",
+      "sourceMapPathOverrides": {
+        "webpack:///./src/*": "${webRoot}/*",
+        "ng:///*": "${webRoot}/*"
+      }
+    },
+
+    // ─── Frontend: Edge debugger (alternative) ─────────────────────────────
+    {
+      "name": "🟠 Frontend: Edge (localhost:4200)",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:4200",
+      "webRoot": "${workspaceFolder}/frontend/src",
+      "sourceMapPathOverrides": {
+        "webpack:///./src/*": "${webRoot}/*",
+        "ng:///*": "${webRoot}/*"
+      }
+    },
+
+    // ─── Compound: Start both debuggers together ────────────────────────────
+    {
+      "name": "🚀 Full Stack Debug",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickRemoteProcess}",
+      "pipeTransport": {
+        "pipeProgram": "docker",
+        "pipeArgs": ["exec", "-i", "poc-aura-backend-dev"],
+        "debuggerPath": "/vsdbg/vsdbg",
+        "pipeCwd": "${workspaceFolder}"
+      },
+      "sourceFileMap": {
+        "/app": "${workspaceFolder}/backend"
+      },
+      "serverReadyAction": {
+        "action": "startDebugging",
+        "name": "🟠 Frontend: Chrome (localhost:4200)"
+      },
+      "justMyCode": true
+    }
+  ]
+}

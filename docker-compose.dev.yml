@@ -36,12 +36,42 @@ services:
     networks:
       - poc-dev-network
 
+  # VS Code Dev Containers connects here — co ca .NET 8 + Node 22
+  workspace:
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
+    container_name: poc-aura-workspace
+    volumes:
+      - ..:/workspace:cached
+      - workspace-node-modules:/workspace/frontend/node_modules
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://0.0.0.0:5000
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;
+      - DOTNET_USE_POLLING_FILE_WATCHER=true
+      - CHOKIDAR_USEPOLLING=true
+    ports:
+      - "5000:5000"
+      - "4200:4200"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    networks:
+      - poc-dev-network
+
+  # Standalone runners - dung khi KHONG dung devcontainer
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
     container_name: poc-aura-backend-dev
     restart: unless-stopped
+    profiles: ["standalone"]
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://0.0.0.0:8080
@@ -67,6 +97,7 @@ services:
       dockerfile: Dockerfile.dev
     container_name: poc-aura-frontend-dev
     restart: unless-stopped
+    profiles: ["standalone"]
     ports:
       - "4200:4200"
     volumes:
@@ -82,6 +113,7 @@ services:
 volumes:
   sqlserver-dev-data:
   cloudbeaver-dev-data:
+  workspace-node-modules:
 
 networks:
   poc-dev-network:

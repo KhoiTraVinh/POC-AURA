@@ -1,0 +1,68 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "docker: up (prod)",
+      "type": "shell",
+      "command": "docker compose up --build",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new" }
+    },
+    {
+      "label": "docker: up (dev)",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml up --build",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new" }
+    },
+    {
+      "label": "docker: down",
+      "type": "shell",
+      "command": "docker compose down && docker compose -f docker-compose.dev.yml down",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "docker: logs backend",
+      "type": "shell",
+      "command": "docker compose logs -f backend",
+      "presentation": { "reveal": "always", "panel": "new" }
+    },
+    {
+      "label": "docker: logs frontend",
+      "type": "shell",
+      "command": "docker compose logs -f frontend",
+      "presentation": { "reveal": "always", "panel": "new" }
+    },
+    {
+      "label": "docker: dev up (background)",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.dev.yml up --build -d",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "run: backend (dotnet watch)",
+      "type": "shell",
+      "command": "cd /workspace/backend && dotnet watch run --project POC.AURA.Api/POC.AURA.Api.csproj --urls http://0.0.0.0:5000",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new", "group": "devservers" },
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "run: frontend (ng serve)",
+      "type": "shell",
+      "command": "cd /workspace/frontend && npm start",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new", "group": "devservers" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "run: full stack",
+      "dependsOn": ["run: backend (dotnet watch)", "run: frontend (ng serve)"],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always" }
+    }
+  ]
+}

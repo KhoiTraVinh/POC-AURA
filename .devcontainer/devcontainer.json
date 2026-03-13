@@ -1,18 +1,9 @@
 {
-  "name": "POC AURA - SignalR Dev",
+  "name": "POC AURA - Full Stack Dev",
   "dockerComposeFile": ["../docker-compose.dev.yml"],
-  "service": "backend",
-  "workspaceFolder": "/app",
-
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "22"
-    },
-    "ghcr.io/devcontainers/features/dotnet:2": {
-      "version": "8"
-    },
-    "ghcr.io/devcontainers/features/git:1": {}
-  },
+  "service": "workspace",
+  "workspaceFolder": "/workspace",
+  "runServices": ["sqlserver", "cloudbeaver", "workspace"],
 
   "customizations": {
     "vscode": {
@@ -41,13 +32,15 @@
     }
   },
 
-  "forwardPorts": [5000, 4200],
+  "forwardPorts": [5000, 4200, 8978, 1433],
   "portsAttributes": {
-    "5000": { "label": "Backend API", "onAutoForward": "notify" },
-    "4200": { "label": "Angular Dev Server", "onAutoForward": "openBrowser" }
+    "5000": { "label": "Backend API / Swagger", "onAutoForward": "notify" },
+    "4200": { "label": "Angular Dev Server", "onAutoForward": "openBrowser" },
+    "8978": { "label": "CloudBeaver DB Manager", "onAutoForward": "notify" },
+    "1433": { "label": "SQL Server", "onAutoForward": "silent" }
   },
 
-  "postCreateCommand": "cd /app && dotnet restore POC.AURA.Api/POC.AURA.Api.csproj",
+  "postCreateCommand": "cd /workspace/backend && dotnet restore POC.AURA.Api/POC.AURA.Api.csproj && cd /workspace/frontend && npm install",
 
   "remoteUser": "root"
 }
