@@ -1,6 +1,41 @@
 name: poc-aura-dev
 
 services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: poc-aura-sqlserver-dev
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Aura@Poc2024!
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-dev-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "Aura@Poc2024!", "-Q", "SELECT 1", "-C"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - poc-dev-network
+
+  cloudbeaver:
+    image: dbeaver/cloudbeaver:latest
+    container_name: poc-aura-cloudbeaver-dev
+    restart: unless-stopped
+    ports:
+      - "8978:8978"
+    volumes:
+      - cloudbeaver-dev-data:/opt/cloudbeaver/workspace
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - poc-dev-network
+
   backend:
     build:
       context: ./backend
@@ -11,11 +46,14 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://0.0.0.0:8080
       - DOTNET_USE_POLLING_FILE_WATCHER=true
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;
     ports:
       - "5000:8080"
     volumes:
       - ./backend:/app
-    # Required for vsdbg attach debugging
+    depends_on:
+      sqlserver:
+        condition: service_healthy
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -40,6 +78,10 @@ services:
       - backend
     networks:
       - poc-dev-network
+
+volumes:
+  sqlserver-dev-data:
+  cloudbeaver-dev-data:
 
 networks:
   poc-dev-network:
