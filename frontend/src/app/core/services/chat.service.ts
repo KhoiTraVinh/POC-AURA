@@ -28,8 +28,8 @@ export interface MarkReadRequest {
 })
 export class ChatService {
   private hubConnection: signalR.HubConnection | undefined;
-  private readonly apiUrl = 'http://localhost:5000/api/messages'; // Adjust base URL as needed for dev
-  private readonly hubUrl = 'http://localhost:5000/hubs/chat';
+  private readonly apiUrl = '/api/messages'; 
+  private readonly hubUrl = '/hubs/chat';
 
   // State
   private messagesSubject = new BehaviorSubject<MessageDto[]>([]);

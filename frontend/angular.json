@@ -62,7 +62,8 @@
               "buildTarget": "poc-aura-frontend:build:production"
             },
             "development": {
-              "buildTarget": "poc-aura-frontend:build:development"
+              "buildTarget": "poc-aura-frontend:build:development",
+              "proxyConfig": "proxy.conf.json"
             }
           },
           "defaultConfiguration": "development"

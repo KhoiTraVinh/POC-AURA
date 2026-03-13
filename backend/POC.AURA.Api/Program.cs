@@ -24,11 +24,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowAngular", policy =>
     {
         policy
-            .WithOrigins(
-                "http://localhost:4200",
-                "http://localhost:80",
-                "http://frontend"
-            )
+            .SetIsOriginAllowed(origin => true) // Allow any origin for dev
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -84,6 +80,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowAngular");
+
+app.Use((context, next) =>
+{
+    Console.WriteLine($"Request: {context.Request.Method} {context.Request.Path}");
+    return next();
+});
 
 app.MapControllers();
 app.MapHub<ChatHub>("/hubs/chat");
