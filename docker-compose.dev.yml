@@ -15,6 +15,11 @@ services:
       - "5000:8080"
     volumes:
       - ./backend:/app
+    # Required for vsdbg attach debugging
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
     networks:
       - poc-dev-network
 

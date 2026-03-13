@@ -1,6 +1,11 @@
-# Dev image with hot reload (dotnet watch)
+# Dev image — dotnet watch + vsdbg for VS Code attach debugging
 FROM mcr.microsoft.com/dotnet/sdk:8.0
 WORKDIR /app
+
+# Install vsdbg (VS Code .NET debugger)
+RUN apt-get update && apt-get install -y --no-install-recommends unzip curl \
+    && curl -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 
