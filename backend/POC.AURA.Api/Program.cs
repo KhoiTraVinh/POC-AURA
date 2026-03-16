@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using POC.AURA.Api.Data;
 using POC.AURA.Api.Entities;
 using POC.AURA.Api.Hubs;
+using POC.AURA.Api.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,9 +16,18 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<CacheKeyRegistry>();
+
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    // Tắt hoàn toàn server-side ping (type:6): đặt rất lớn thay vì TimeSpan.MaxValue
+    // vì MaxValue có thể overflow khi cộng với DateTime.UtcNow bên trong SignalR internals
+    options.KeepAliveInterval = TimeSpan.FromDays(365);
+    // ClientTimeoutInterval: thời gian server chờ client trước khi coi là dead
+    // Phải > KeepAliveInterval, đặt lớn để không bao giờ kick client do idle
+    options.ClientTimeoutInterval = TimeSpan.FromDays(365);
 });
 
 builder.Services.AddCors(options =>

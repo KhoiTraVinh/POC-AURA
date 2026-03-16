@@ -96,12 +96,59 @@
           </button>
         }
 
+        <!-- Cache Inspector toggle -->
+        <button
+          class="btn-cache"
+          [class.active]="showCachePanel()"
+          (click)="toggleCachePanel()"
+          title="Memory Cache Inspector"
+        >🗄️ Cache</button>
+
         <div class="user-info">
           <span class="user-avatar">{{ username().charAt(0).toUpperCase() }}</span>
           <span class="user-name">{{ username() }}</span>
         </div>
       </div>
     </header>
+
+    <!-- ── Cache Inspector Panel ─────────────────────────────── -->
+    @if (showCachePanel()) {
+      <div class="cache-panel">
+        <div class="cache-panel-header">
+          <div class="cache-panel-title">
+            <span>🗄️ Memory Cache Inspector</span>
+            @if (cacheSnapshot()) {
+              <span class="cache-count-badge">{{ cacheSnapshot()!.count }} entries</span>
+            }
+          </div>
+          <div class="cache-panel-actions">
+            <button class="cache-btn-refresh" (click)="refreshCache()" [disabled]="cacheLoading()">
+              @if (cacheLoading()) { <span class="spin-icon">⟳</span> }
+              @else { ↻ Refresh }
+            </button>
+            <button class="cache-btn-close" (click)="showCachePanel.set(false)">✕</button>
+          </div>
+        </div>
+
+        <div class="cache-body">
+          @if (cacheSnapshot()?.error) {
+            <div class="cache-error">⚠ {{ cacheSnapshot()!.error }}</div>
+          }
+
+          @if (!cacheLoading() && cacheSnapshot()?.count === 0 && !cacheSnapshot()?.error) {
+            <div class="cache-empty">Cache trống.</div>
+          }
+
+          @for (entry of cacheSnapshot()?.entries ?? []; track entry.key) {
+            <div class="cache-entry">
+              <span class="cache-key">{{ entry.key }}</span>
+              <span class="cache-value">{{ formatCacheValue(entry.value) }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
+    <!-- ── End Cache Inspector Panel ────────────────────────────── -->
 
     <!-- Sync Banner — hiện khi đang fetch messages bị miss -->
     @if (syncStatus().syncing) {

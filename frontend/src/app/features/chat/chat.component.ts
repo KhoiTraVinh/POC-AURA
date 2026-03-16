@@ -9,8 +9,20 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { Subject, takeUntil } from 'rxjs';
 import { ChatService, ConnectionStatus, MessageDto, SyncStatus } from '../../core/services/chat.service';
+
+export interface CacheEntry {
+  key: string;
+  value: unknown;
+}
+
+export interface CacheSnapshot {
+  count: number;
+  entries: CacheEntry[];
+  error?: string;
+}
 
 @Component({
   selector: 'app-chat',
@@ -38,19 +50,21 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   readonly isConnected = computed(() => this.connectionStatus() === 'connected');
 
+  // Cache Inspector
+  readonly showCachePanel = signal(false);
+  readonly cacheSnapshot = signal<CacheSnapshot | null>(null);
+  readonly cacheLoading = signal(false);
+
   private readonly destroy$ = new Subject<void>();
 
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly http: HttpClient,
+  ) {}
 
   ngOnInit(): void {
-    // Intentionally left blank, waiting for user to click Join
-  }
-
-  async join(): Promise<void> {
-    const name = this.usernameInput().trim();
-    if (!name) return;
-
-    this.username.set(name);
+    // Subscriptions đặt ở đây — chỉ subscribe 1 lần duy nhất trong vòng đời component
+    // Không đặt trong join() để tránh stack nhiều subscription mỗi lần join() được gọi
 
     this.chatService.messages$
       .pipe(takeUntil(this.destroy$))
@@ -79,6 +93,16 @@ export class ChatComponent implements OnInit, OnDestroy {
       .subscribe((sync) => {
         this.syncStatus.set(sync);
       });
+  }
+
+  async join(): Promise<void> {
+    // Guard: không cho join lại khi đang connected / đang trong quá trình join
+    if (this.isJoined()) return;
+
+    const name = this.usernameInput().trim();
+    if (!name) return;
+
+    this.username.set(name);
 
     try {
       await this.chatService.startConnection(this.groupId(), this.staffIdInput());
@@ -103,6 +127,34 @@ export class ChatComponent implements OnInit, OnDestroy {
       error: (err) => console.error('Could not send message', err)
     });
   }
+
+  // ── Cache Inspector ────────────────────────────────────────────
+  toggleCachePanel(): void {
+    const next = !this.showCachePanel();
+    this.showCachePanel.set(next);
+    if (next) this.refreshCache();
+  }
+
+  refreshCache(): void {
+    this.cacheLoading.set(true);
+    this.http.get<CacheSnapshot>('/api/cache').subscribe({
+      next: (data) => {
+        this.cacheSnapshot.set(data);
+        this.cacheLoading.set(false);
+      },
+      error: (err) => {
+        console.error('Failed to load cache entries', err);
+        this.cacheSnapshot.set({ count: 0, entries: [], error: 'Request failed' });
+        this.cacheLoading.set(false);
+      },
+    });
+  }
+
+  formatCacheValue(value: unknown): string {
+    if (value === null || value === undefined) return 'null';
+    return JSON.stringify(value);
+  }
+  // ── End Cache Inspector ─────────────────────────────────────────
 
   // Mô phỏng token hết hạn / mất mạng — hub tự auto-leave group
   async disconnect(): Promise<void> {
