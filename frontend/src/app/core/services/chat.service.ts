@@ -1,52 +1,13 @@
 import { Injectable, OnDestroy } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import * as signalR from '@microsoft/signalr';
 import { BehaviorSubject, firstValueFrom, Observable } from 'rxjs';
-
-export interface MessageDto {
-  id: number;
-  groupId: number;
-  type: string;
-  ref: string;
-  createdAt: string;
-}
-
-export interface SendMessageRequest {
-  groupId: number;
-  type: string;
-  ref: string;
-}
-
-
-export interface ReadReceiptDto {
-  groupId: number;
-  staffId: number;
-  lastReadMessageId: number | null;
-}
-
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
-
-export interface SyncStatus {
-  syncing: boolean;
-  count: number;
-}
-
-// Retry vô hạn: [0s, 2s, 5s, 10s, 10s, ...] — không bao giờ trả về null nên không bao giờ bỏ cuộc
-const infiniteRetry: signalR.IRetryPolicy = {
-  nextRetryDelayInMilliseconds(ctx: signalR.RetryContext): number {
-    const delays = [0, 2000, 5000, 10000];
-    return delays[Math.min(ctx.previousRetryCount, delays.length - 1)];
-  }
-};
+import { MessageDto, ConnectionStatus, SendMessageRequest } from './chat.types';
+import { ChatHttpService } from './chat-http.service';
+import { ChatSignalrService } from './chat-signalr.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class ChatService implements OnDestroy {
-  private hubConnection: signalR.HubConnection | undefined;
-  private readonly apiUrl = '/api/messages';
-  private readonly hubUrl = '/hubs/chat';
-
   // State
   private messagesSubject = new BehaviorSubject<MessageDto[]>([]);
   public messages$ = this.messagesSubject.asObservable();
@@ -57,21 +18,37 @@ export class ChatService implements OnDestroy {
   private connectionStatusSubject = new BehaviorSubject<ConnectionStatus>('disconnected');
   public connectionStatus$ = this.connectionStatusSubject.asObservable();
 
-  private syncStatusSubject = new BehaviorSubject<SyncStatus>({ syncing: false, count: 0 });
-  public syncStatus$ = this.syncStatusSubject.asObservable();
-
-  // Context để reconnect lại khi cần
+  // Context for reconnecting when needed
   private currentGroupId: number | null = null;
   private currentStaffId: number | null = null;
 
-  // Phân biệt: user chủ động ngắt vs. mất mạng
+  // Differentiate: user intentionally stopped vs network loss
   private isIntentionallyStopped = false;
 
   private readonly onlineHandler = () => this.handleOnline();
 
-  constructor(private http: HttpClient) {
-    // Khi trình duyệt phát hiện có mạng lại — fallback nếu auto-reconnect đã dừng
+  constructor(
+    private chatHttp: ChatHttpService,
+    private chatSignalr: ChatSignalrService
+  ) {
+    // When browser detects network is back — fallback if auto-reconnect stopped
     window.addEventListener('online', this.onlineHandler);
+
+    // Subscribe to SignalR events
+    this.chatSignalr.connectionStatus$.subscribe(status => {
+      this.connectionStatusSubject.next(status);
+      if (status === 'connected') {
+        this.fetchLatestMessages();
+      }
+    });
+
+    this.chatSignalr.newMessage$.subscribe(() => {
+      this.fetchLatestMessages();
+    });
+
+    this.chatSignalr.userReadReceipt$.subscribe(receipt => {
+      this.readReceiptsSubject.next(receipt);
+    });
   }
 
   ngOnDestroy(): void {
@@ -86,132 +63,60 @@ export class ChatService implements OnDestroy {
       this.currentStaffId !== null &&
       status === 'disconnected'
     ) {
-      // Trạng thái disconnected khi không phải do user → start lại connection
+      // Disconnected state when not caused by user -> restart connection
       await this.startConnection(this.currentGroupId, this.currentStaffId);
     }
-    // Nếu đang 'reconnecting': infinite retry đang chạy, sẽ tự reconnect khi mạng ổn định
   }
 
   public async startConnection(groupId: number, staffId: number): Promise<void> {
-    // Dừng connection cũ nếu còn sống
-    if (this.hubConnection && this.hubConnection.state !== signalR.HubConnectionState.Disconnected) {
-      try { await this.hubConnection.stop(); } catch { /* ignore */ }
-    }
-
     this.isIntentionallyStopped = false;
     this.currentGroupId = groupId;
     this.currentStaffId = staffId;
-    this.connectionStatusSubject.next('connecting');
-
-    this.hubConnection = new signalR.HubConnectionBuilder()
-      .withUrl(this.hubUrl)
-      .withAutomaticReconnect(infiniteRetry)  // Retry vô hạn, không bao giờ bỏ cuộc
-      // Tắt client-side ping (type:6 từ client → server)
-      // KHÔNG dùng 0 — setTimeout(fn, 0) fire ngay lập tức, gây ping liên tục
-      // Dùng giá trị rất lớn (~23 ngày) để không bao giờ fire trong thực tế
-      // 2_000_000_000 ms < 2^31-1 (giới hạn an toàn của setTimeout 32-bit)
-      .withKeepAliveInterval(2_000_000_000)
-      .withServerTimeout(24 * 60 * 60 * 1000)
-      .build();
-
-    // Đang retry sau khi mất kết nối
-    this.hubConnection.onreconnecting(() => {
-      this.connectionStatusSubject.next('reconnecting');
-    });
-
-    // Reconnect thành công — fetch messages bị miss trong lúc offline
-    this.hubConnection.onreconnected(async () => {
-      this.connectionStatusSubject.next('connected');
-      await this.fetchMissingMessages();
-    });
-
-    // onclose chỉ fire khi gọi stop() tường minh (vì infiniteRetry không bao giờ dừng)
-    this.hubConnection.onclose(() => {
-      this.connectionStatusSubject.next('disconnected');
-    });
-
-    this.hubConnection.on('NewMessageNotification', () => {
-      this.fetchMissingMessages();
-    });
-
-    this.hubConnection.on('UserReadReceipt', (data: { staffId: number; messageId: number }) => {
-      this.readReceiptsSubject.next(data);
-    });
-
-    try {
-      await this.hubConnection.start();
-      await this.hubConnection.invoke('JoinGroup', groupId);
-      this.connectionStatusSubject.next('connected');
-      await this.fetchMissingMessages();
-    } catch (err) {
-      this.connectionStatusSubject.next('disconnected');
-      console.error('Error while starting SignalR connection:', err);
-      throw err;
-    }
+    
+    await this.chatSignalr.startConnection(groupId);
+    // Note: The 'connected' status from SignalR service will trigger fetchLatestMessages
   }
 
-  // Dừng kết nối bình thường — user chủ động rời
+  // Normal connection stop — user explicitly leaves
   public async stopConnection(): Promise<void> {
     this.isIntentionallyStopped = true;
-    if (this.hubConnection) {
-      try {
-        if (this.currentGroupId !== null) {
-          await this.hubConnection.invoke('LeaveGroup', this.currentGroupId);
-        }
-        await this.hubConnection.stop();
-      } catch (err) {
-        console.error('Error stopping connection:', err);
-      } finally {
-        this.connectionStatusSubject.next('disconnected');
-        this.messagesSubject.next([]);
-        this.currentGroupId = null;
-        this.currentStaffId = null;
-      }
-    }
+    await this.chatSignalr.stopConnection(this.currentGroupId);
+    
+    this.messagesSubject.next([]);
+    this.connectionStatusSubject.next('disconnected');
+    this.currentGroupId = null;
+    this.currentStaffId = null;
   }
 
-  // Mô phỏng mất mạng / token hết hạn — hub tự auto-leave qua OnDisconnectedAsync
+  // Simulate network loss / token expiration
   public async forceDisconnect(): Promise<void> {
     this.isIntentionallyStopped = true;
-    if (this.hubConnection) {
-      try {
-        await this.hubConnection.stop();
-      } catch (err) {
-        console.error('Error during force disconnect:', err);
-      }
-    }
-    this.connectionStatusSubject.next('disconnected');
+    await this.chatSignalr.forceDisconnect();
   }
 
-  // Reconnect thủ công sau forceDisconnect
+  // Manual reconnect after forceDisconnect
   public async reconnect(): Promise<void> {
     if (this.currentGroupId === null || this.currentStaffId === null) return;
     await this.startConnection(this.currentGroupId, this.currentStaffId);
   }
 
-  private async fetchMissingMessages(): Promise<void> {
-    if (!this.hubConnection || this.currentGroupId === null || this.currentStaffId === null) return;
+  private async fetchLatestMessages(): Promise<void> {
+    if (this.currentGroupId === null || this.currentStaffId === null) return;
 
     try {
-      // Lấy pointer từ HTTP (GET /receipt) — giữ nguyên
+      // Get pointer from HTTP (GET /receipt)
       const receipt = await firstValueFrom(
-        this.http.get<ReadReceiptDto>(
-          `${this.apiUrl}/receipt?groupId=${this.currentGroupId}&staffId=${this.currentStaffId}`
-        )
+        this.chatHttp.getReceipt(this.currentGroupId, this.currentStaffId)
       );
 
       const pointer = receipt.lastReadMessageId;
-      let url = `${this.apiUrl}/${this.currentGroupId}`;
-      if (pointer !== null && pointer !== undefined) {
-        url += `?afterMessageId=${pointer}`;
-      }
 
-      // Lấy messages từ HTTP (GET /messages?afterMessageId) — giữ nguyên
-      const newMessages = await firstValueFrom(this.http.get<MessageDto[]>(url));
+      // Get messages from HTTP (GET /messages?afterMessageId)
+      const newMessages = await firstValueFrom(
+        this.chatHttp.getMessages(this.currentGroupId, pointer)
+      );
 
       if (newMessages.length > 0) {
-        this.syncStatusSubject.next({ syncing: true, count: newMessages.length });
-
         const current = this.messagesSubject.value;
         const existingIds = new Set(current.map(m => m.id));
         const unique = newMessages.filter(m => !existingIds.has(m.id));
@@ -219,19 +124,15 @@ export class ChatService implements OnDestroy {
 
         const maxId = Math.max(...newMessages.map(m => m.id));
 
-        // Chỉ cái này đổi sang hub invoke (thay POST /api/messages/read)
-        // Fire-and-forget: server cập nhật pointer + broadcast UserReadReceipt cho group
-        this.hubConnection.invoke('MarkRead', this.currentGroupId, this.currentStaffId, maxId)
-          .catch(err => console.error('Failed to update read pointer:', err));
-
-        setTimeout(() => this.syncStatusSubject.next({ syncing: false, count: 0 }), 2000);
+        // Let server update pointer + broadcast UserReadReceipt to group
+        this.chatSignalr.updateReadPointer(this.currentGroupId, this.currentStaffId, maxId);
       }
     } catch (err) {
-      console.error('Failed to fetch missing messages:', err);
+      console.error('Failed to fetch latest messages:', err);
     }
   }
 
   public sendMessage(request: SendMessageRequest): Observable<MessageDto> {
-    return this.http.post<MessageDto>(this.apiUrl, request);
+    return this.chatHttp.sendMessage(request);
   }
 }

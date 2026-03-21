@@ -3,6 +3,7 @@ using POC.AURA.Api.Data;
 using POC.AURA.Api.Entities;
 using POC.AURA.Api.Hubs;
 using POC.AURA.Api.Infrastructure;
+using POC.AURA.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,17 +17,18 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<CacheKeyRegistry>();
+// Register newly refactored services implementing design patterns
+builder.Services.AddSingleton<IConnectionManager, ConnectionManager>();
+builder.Services.AddScoped<IMessageService, MessageService>();
 
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
-    // Tắt hoàn toàn server-side ping (type:6): đặt rất lớn thay vì TimeSpan.MaxValue
-    // vì MaxValue có thể overflow khi cộng với DateTime.UtcNow bên trong SignalR internals
+    // Completely disable server-side ping (type:6): set very large instead of TimeSpan.MaxValue
+    // because MaxValue can overflow when added to DateTime.UtcNow inside SignalR internals
     options.KeepAliveInterval = TimeSpan.FromDays(365);
-    // ClientTimeoutInterval: thời gian server chờ client trước khi coi là dead
-    // Phải > KeepAliveInterval, đặt lớn để không bao giờ kick client do idle
+    // ClientTimeoutInterval: server wait time before considering client dead
+    // Must be > KeepAliveInterval, set large to never kick idle clients
     options.ClientTimeoutInterval = TimeSpan.FromDays(365);
 });
 
@@ -50,7 +52,7 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
 
-    // Retry vì SQL Server container có thể chưa sẵn sàng ngay
+    // Retry since SQL Server container might not be ready immediately
     var retries = 5;
     while (retries-- > 0)
     {
@@ -59,7 +61,7 @@ using (var scope = app.Services.CreateScope())
             db.Database.Migrate();
             logger.LogInformation("Database migration completed.");
 
-            // Seed Group mẫu để demo (idempotent)
+            // Seed dummy Group for demo (idempotent)
             if (!db.Groups.Any())
             {
                 db.Groups.AddRange(
@@ -81,7 +83,7 @@ using (var scope = app.Services.CreateScope())
         {
             if (app.Environment.IsDevelopment())
             {
-                // Dev only: DB state bị lệch → xóa và tạo lại
+                // Dev only: DB state mismatch → delete and recreate
                 logger.LogWarning("Migration failed in dev mode, resetting database: {Message}", ex.Message);
                 db.Database.EnsureDeleted();
                 db.Database.Migrate();

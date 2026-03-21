@@ -17,7 +17,7 @@
             type="text"
             [ngModel]="usernameInput()"
             (ngModelChange)="usernameInput.set($event)"
-            placeholder="Nhập username..."
+            placeholder="Enter username..."
             autocomplete="off"
             autofocus
           />
@@ -84,26 +84,6 @@
           {{ connectionStatusLabel() }}
         </div>
 
-        <!-- Disconnect / Reconnect buttons để mô phỏng token hết hạn -->
-        @if (connectionStatus() === 'connected') {
-          <button class="btn-disconnect" (click)="disconnect()" title="Mô phỏng token hết hạn / mất mạng">
-            Ngắt kết nối
-          </button>
-        }
-        @if (connectionStatus() === 'disconnected') {
-          <button class="btn-reconnect" (click)="reconnect()">
-            Kết nối lại
-          </button>
-        }
-
-        <!-- Cache Inspector toggle -->
-        <button
-          class="btn-cache"
-          [class.active]="showCachePanel()"
-          (click)="toggleCachePanel()"
-          title="Memory Cache Inspector"
-        >🗄️ Cache</button>
-
         <div class="user-info">
           <span class="user-avatar">{{ username().charAt(0).toUpperCase() }}</span>
           <span class="user-name">{{ username() }}</span>
@@ -111,57 +91,10 @@
       </div>
     </header>
 
-    <!-- ── Cache Inspector Panel ─────────────────────────────── -->
-    @if (showCachePanel()) {
-      <div class="cache-panel">
-        <div class="cache-panel-header">
-          <div class="cache-panel-title">
-            <span>🗄️ Memory Cache Inspector</span>
-            @if (cacheSnapshot()) {
-              <span class="cache-count-badge">{{ cacheSnapshot()!.count }} entries</span>
-            }
-          </div>
-          <div class="cache-panel-actions">
-            <button class="cache-btn-refresh" (click)="refreshCache()" [disabled]="cacheLoading()">
-              @if (cacheLoading()) { <span class="spin-icon">⟳</span> }
-              @else { ↻ Refresh }
-            </button>
-            <button class="cache-btn-close" (click)="showCachePanel.set(false)">✕</button>
-          </div>
-        </div>
-
-        <div class="cache-body">
-          @if (cacheSnapshot()?.error) {
-            <div class="cache-error">⚠ {{ cacheSnapshot()!.error }}</div>
-          }
-
-          @if (!cacheLoading() && cacheSnapshot()?.count === 0 && !cacheSnapshot()?.error) {
-            <div class="cache-empty">Cache trống.</div>
-          }
-
-          @for (entry of cacheSnapshot()?.entries ?? []; track entry.key) {
-            <div class="cache-entry">
-              <span class="cache-key">{{ entry.key }}</span>
-              <span class="cache-value">{{ formatCacheValue(entry.value) }}</span>
-            </div>
-          }
-        </div>
-      </div>
-    }
-    <!-- ── End Cache Inspector Panel ────────────────────────────── -->
-
-    <!-- Sync Banner — hiện khi đang fetch messages bị miss -->
-    @if (syncStatus().syncing) {
-      <div class="sync-banner">
-        <span class="sync-spinner">⟳</span>
-        Đang đồng bộ {{ syncStatus().count }} tin nhắn bị miss...
-      </div>
-    }
-
     <!-- Reconnecting Banner -->
     @if (connectionStatus() === 'reconnecting') {
       <div class="reconnecting-banner">
-        Đang kết nối lại... Tin nhắn sẽ được đồng bộ sau khi kết nối thành công.
+        Reconnecting... Messages will be fetched after successful connection.
       </div>
     }
 
@@ -170,8 +103,8 @@
       @if (messages().length === 0) {
         <div class="empty-state">
           <div class="empty-icon">💬</div>
-          <p>Chưa có tin nhắn trong Group {{ groupId() }}.</p>
-          <small>Mở nhiều tab và join cùng groupId để mô phỏng nhiều clients.</small>
+          <p>No messages in Group {{ groupId() }}.</p>
+          <small>Open multiple tabs and join the same groupId to simulate multiple clients.</small>
         </div>
       }
 
@@ -183,7 +116,7 @@
             <span class="message-time">
               {{ formatTime(msg.createdAt) }}
               @if (msg.id <= (latestReadReceptId() || 0)) {
-                <small class="read-indicator">✓✓ Đã xem</small>
+                <small class="read-indicator">✓✓ Read</small>
               }
             </span>
           </div>
@@ -198,7 +131,7 @@
           [ngModel]="messageInput()"
           (ngModelChange)="messageInput.set($event)"
           (keydown)="onKeyDown($event)"
-          placeholder="Nhập tin nhắn... (Enter để gửi)"
+          placeholder="Type a message... (Enter to send)"
           rows="1"
           [disabled]="!isConnected()"
         ></textarea>

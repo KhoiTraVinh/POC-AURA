@@ -11,18 +11,8 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Subject, takeUntil } from 'rxjs';
-import { ChatService, ConnectionStatus, MessageDto, SyncStatus } from '../../core/services/chat.service';
-
-export interface CacheEntry {
-  key: string;
-  value: unknown;
-}
-
-export interface CacheSnapshot {
-  count: number;
-  entries: CacheEntry[];
-  error?: string;
-}
+import { ChatService } from '../../core/services/chat.service';
+import { ConnectionStatus, MessageDto } from '../../core/services/chat.types';
 
 @Component({
   selector: 'app-chat',
@@ -40,20 +30,13 @@ export class ChatComponent implements OnInit, OnDestroy {
   readonly messageInput = signal('');
   readonly messages = signal<MessageDto[]>([]);
   readonly connectionStatus = signal<ConnectionStatus>('disconnected');
-  readonly syncStatus = signal<SyncStatus>({ syncing: false, count: 0 });
   readonly isJoined = signal(false);
   readonly usernameInput = signal('');
 
-  // Track read receipts
-  private latestReadReceiptsMap = new Map<number, number>();
+  // Track the minimum read receipt ID (for all group members)
   readonly latestReadReceptId = signal<number | null>(null);
 
   readonly isConnected = computed(() => this.connectionStatus() === 'connected');
-
-  // Cache Inspector
-  readonly showCachePanel = signal(false);
-  readonly cacheSnapshot = signal<CacheSnapshot | null>(null);
-  readonly cacheLoading = signal(false);
 
   private readonly destroy$ = new Subject<void>();
 
@@ -63,8 +46,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
-    // Subscriptions đặt ở đây — chỉ subscribe 1 lần duy nhất trong vòng đời component
-    // Không đặt trong join() để tránh stack nhiều subscription mỗi lần join() được gọi
+    // Subscriptions placed here — only subscribe once during the component lifecycle
 
     this.chatService.messages$
       .pipe(takeUntil(this.destroy$))
@@ -77,7 +59,7 @@ export class ChatComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe((receipt) => {
         if (receipt) {
-          this.latestReadReceiptsMap.set(receipt.messageId, receipt.staffId);
+          // The backend now sends the group's minimum read pointer instead of individual
           this.latestReadReceptId.set(receipt.messageId);
         }
       });
@@ -87,16 +69,10 @@ export class ChatComponent implements OnInit, OnDestroy {
       .subscribe((status) => {
         this.connectionStatus.set(status);
       });
-
-    this.chatService.syncStatus$
-      .pipe(takeUntil(this.destroy$))
-      .subscribe((sync) => {
-        this.syncStatus.set(sync);
-      });
   }
 
   async join(): Promise<void> {
-    // Guard: không cho join lại khi đang connected / đang trong quá trình join
+    // Guard: block re-joining when connected or during the joining process
     if (this.isJoined()) return;
 
     const name = this.usernameInput().trim();
@@ -108,7 +84,7 @@ export class ChatComponent implements OnInit, OnDestroy {
       await this.chatService.startConnection(this.groupId(), this.staffIdInput());
       this.isJoined.set(true);
     } catch {
-      // connectionStatus$ sẽ tự emit 'disconnected'
+      // connectionStatus$ will automatically emit 'disconnected'
     }
   }
 
@@ -126,44 +102,6 @@ export class ChatComponent implements OnInit, OnDestroy {
       },
       error: (err) => console.error('Could not send message', err)
     });
-  }
-
-  // ── Cache Inspector ────────────────────────────────────────────
-  toggleCachePanel(): void {
-    const next = !this.showCachePanel();
-    this.showCachePanel.set(next);
-    if (next) this.refreshCache();
-  }
-
-  refreshCache(): void {
-    this.cacheLoading.set(true);
-    this.http.get<CacheSnapshot>('/api/cache').subscribe({
-      next: (data) => {
-        this.cacheSnapshot.set(data);
-        this.cacheLoading.set(false);
-      },
-      error: (err) => {
-        console.error('Failed to load cache entries', err);
-        this.cacheSnapshot.set({ count: 0, entries: [], error: 'Request failed' });
-        this.cacheLoading.set(false);
-      },
-    });
-  }
-
-  formatCacheValue(value: unknown): string {
-    if (value === null || value === undefined) return 'null';
-    return JSON.stringify(value);
-  }
-  // ── End Cache Inspector ─────────────────────────────────────────
-
-  // Mô phỏng token hết hạn / mất mạng — hub tự auto-leave group
-  async disconnect(): Promise<void> {
-    await this.chatService.forceDisconnect();
-  }
-
-  // Kết nối lại — tự động fetch messages bị miss bằng pointer từ server
-  async reconnect(): Promise<void> {
-    await this.chatService.reconnect();
   }
 
   onKeyDown(event: KeyboardEvent): void {
