@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SignalR System Flowchart</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0f1117; font-family: 'Segoe UI', Arial, sans-serif; padding: 32px; }
+h1 { color: #e2e8f0; font-size: 20px; text-align: center; margin-bottom: 4px; }
+.subtitle { color: #64748b; font-size: 13px; text-align: center; margin-bottom: 32px; }
+
+.diagram { display: flex; gap: 0; }
+
+/* Swim lane */
+.lane { flex: 1; position: relative; padding: 0 8px; }
+.lane-header { text-align: center; padding: 10px 6px; border-radius: 8px 8px 0 0; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; border-bottom: 2px solid; margin-bottom: 12px; }
+.lane-hw   .lane-header { background: #1e1438; color: #c4b5fd; border-color: #7c3aed; }
+.lane-os   .lane-header { background: #0c1f35; color: #7dd3fc; border-color: #2563eb; }
+.lane-sr   .lane-header { background: #1c1200; color: #fbbf24; border-color: #d97706; }
+.lane-be   .lane-header { background: #0a2010; color: #4ade80; border-color: #16a34a; }
+.lane-fe   .lane-header { background: #200a0a; color: #f87171; border-color: #dc2626; }
+
+.lane-hw { border-left: 2px dashed #2d1b69; border-right: 1px dashed #1a1030; }
+.lane-os { border-right: 1px dashed #0d2040; }
+.lane-sr { border-right: 1px dashed #2a1a00; }
+.lane-be { border-right: 1px dashed #0a2010; }
+.lane-fe { border-right: 2px dashed #2a0808; }
+
+/* Nodes */
+.node { border-radius: 6px; padding: 8px 10px; font-size: 11px; line-height: 1.5; text-align: center; margin: 0 auto 4px; position: relative; max-width: 160px; }
+.node-start { border-radius: 20px; background: #1e3a5f; border: 2px solid #3b82f6; color: #bfdbfe; font-weight: 700; }
+.node-end   { border-radius: 20px; background: #14532d; border: 2px solid #22c55e; color: #bbf7d0; font-weight: 700; }
+.node-hw    { background: #1c1030; border: 1.5px solid #7c3aed; color: #ddd6fe; }
+.node-os    { background: #0c2040; border: 1.5px solid #3b82f6; color: #bfdbfe; }
+.node-sr    { background: #2a1800; border: 1.5px solid #d97706; color: #fde68a; }
+.node-be    { background: #0a2a12; border: 1.5px solid #22c55e; color: #bbf7d0; }
+.node-fe    { background: #2a0f0f; border: 1.5px solid #f87171; color: #fecaca; }
+.node-diamond { transform: rotate(45deg); width: 60px; height: 60px; margin: 10px auto; background: #1a1a2e; border: 1.5px solid #60a5fa; display: flex; align-items: center; justify-content: center; }
+.node-diamond span { transform: rotate(-45deg); font-size: 10px; color: #93c5fd; display: block; text-align: center; line-height: 1.2; }
+
+/* Arrows */
+.arrow-down { text-align: center; color: #475569; font-size: 20px; line-height: 1; margin: 2px 0; }
+.arrow-label { font-size: 9px; color: #64748b; text-align: center; margin-bottom: 2px; }
+.cross-arrow { display: flex; align-items: center; justify-content: center; gap: 2px; font-size: 10px; color: #475569; margin: 6px 0; }
+.h-line { flex: 1; height: 1px; background: #334155; }
+
+code { background: #1e293b; color: #93c5fd; padding: 0 4px; border-radius: 3px; font-size: 10px; }
+.badge { display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 8px; margin-top: 3px; }
+.b-cpu { background: #3b0764; color: #e9d5ff; }
+.b-ram { background: #0c3060; color: #bae6fd; }
+.b-net { background: #064e3b; color: #6ee7b7; }
+.b-zero { background: #431407; color: #fed7aa; }
+
+.spacer { height: 10px; }
+.section-label { font-size: 9px; color: #475569; text-align: center; font-style: italic; margin: 8px 0 4px; border-top: 1px dashed #1e293b; padding-top: 6px; }
+
+/* Connecting arrows between lanes - legend */
+.flow-group { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<h1>⚡ SignalR Architecture — System Flowchart</h1>
+<p class="subtitle">POC AURA · Swim-lane view: Hardware → OS → SignalR → Backend → Frontend</p>
+
+<div class="diagram">
+
+  <!-- LANE 1: Hardware -->
+  <div class="lane lane-hw">
+    <div class="lane-header">🔌 Hardware</div>
+
+    <div class="node node-start">User Join Chat<br><small>Browser Tab Opens</small></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-hw">NIC sends<br><code>TCP SYN</code></div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— Network Drop Event —</div>
+
+    <div class="node node-hw">Cable/WiFi Lost<br><br><span class="badge b-cpu">NIC IRQ → CPU</span></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-hw">CPU saves<br>Register Context<br>to Stack RAM</div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— 10s Retry / Hardware Timer —</div>
+
+    <div class="node node-hw">HPET/RTC Chip<br>counts 10,000ms<br><span class="badge b-zero">CPU 0% (C-State)</span></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-hw">Timer IRQ fires<br>→ wakes CPU</div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— Reconnect —</div>
+
+    <div class="node node-hw">NIC sends<br><code>SYN → SYN-ACK → ACK</code><br>TLS Handshake<br><span class="badge b-cpu">ALU busy ~5ms</span></div>
+    <div class="arrow-down">↓ →</div>
+  </div>
+
+  <!-- LANE 2: OS Kernel -->
+  <div class="lane lane-os">
+    <div class="lane-header">🏛️ OS Kernel</div>
+
+    <div class="spacer"></div>
+
+    <div class="node node-os">TCP 3-way Handshake<br>Socket: <code>ESTABLISHED</code><br><span class="badge b-ram">Ring Buffer allocated</span></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-os">WebSocket Upgrade<br>101 Switching Protocols</div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— Drop Handling —</div>
+
+    <div class="node node-os">Driver ISR runs<br>"Link Down" reported</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-os">TCP Stack:<br><code>ESTABLISHED → CLOSED</code><br>Socket freed from RAM</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-os">Software Interrupt<br>→ Browser Process<br><code>socket.onclose</code> fired</div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— Timer & NAT —</div>
+
+    <div class="node node-os">OS TimerQueue:<br>10s deadline registered<br>→ CPU released</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-os">Callback pushed to<br>JS Task Queue<br><span class="badge b-zero">Stack was EMPTY 10s</span></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-os">SYN → Router NAT Table<br>New NAT entry created</div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-os">New Socket allocated<br>Ring Buffer restored<br><code>socket.onopen</code> fired</div>
+    <div class="arrow-down">↓ →</div>
+  </div>
+
+  <!-- LANE 3: SignalR -->
+  <div class="lane lane-sr">
+    <div class="lane-header">🔄 SignalR Client</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-sr"><code>HubConnectionBuilder</code><br>.withAutomaticReconnect<br>(infiniteRetry)<br>.withKeepAliveInterval<br>(~23 days = no ping)</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-sr"><code>hubConnection.start()</code><br>WebSocket connected<br><code>onconnected</code> fires</div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-sr"><code>onclose()</code> callback runs<br>State → <b>Reconnecting</b></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-sr"><code>setTimeout(retry, 10000)</code><br>→ handed to OS<br><span class="badge b-zero">Stack POPPED (empty)</span></div>
+    <div class="arrow-down">↓ →</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-sr">Retry fires:<br><code>SYN</code> attempt via NIC</div>
+
+    <div style="margin: 6px auto; text-align: center;">
+      <div style="background:#1e1030;border:1px solid #7c3aed;border-radius:6px;padding:6px 8px;font-size:10px;color:#ddd6fe;max-width:150px;margin: 0 auto;">
+        ↻ If fail → back to<br><code>setTimeout</code><br><span class="badge b-zero">O(1) Stack. No leak.</span>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-sr"><code>onreconnected()</code><br><code>JoinGroup</code> re-invoked<br>State → <b>Connected</b></div>
+    <div class="arrow-down">↓ →</div>
+  </div>
+
+  <!-- LANE 4: Backend -->
+  <div class="lane lane-be">
+    <div class="lane-header">⚙️ .NET 8 Backend</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-be"><code>ChatHub.JoinGroup()</code><br>Groups.AddToGroupAsync<br>Client joins room</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— New Message arrives —</div>
+
+    <div class="node node-be"><code>MessageService</code><br>Save to SQL DB<br>(ACID guaranteed)</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-be">Broadcast via Hub:<br><code>SendAsync("NewMessageNotification")</code><br><span class="badge b-net">Only JobId, NOT file</span></div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— On Reconnect —</div>
+
+    <div class="node node-be">HTTP <code>GET /messages<br>?afterId={localPointer}</code><br>SQL Index O(log N)<br>Returns only missed msgs</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-be"><code>UpdateReadReceipt</code><br>SQL <code>GROUP BY MIN</code><br>All members read →<br>Broadcast <code>UserReadReceipt</code></div>
+    <div class="arrow-down">↓ →</div>
+  </div>
+
+  <!-- LANE 5: Frontend -->
+  <div class="lane lane-fe">
+    <div class="lane-header">🖥️ Angular Frontend</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="node node-fe">Status: <b style="color:#4ade80">🟢 Connected</b><br><code>fetchLatestMessages()</code><br>called once</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— Notification received —</div>
+
+    <div class="node node-fe">SignalR event:<br><code>NewMessageNotification</code><br>↓ trigger pull</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-fe">HTTP GET with<br><code>localLatestPointer</code><br><span class="badge b-ram">No DB call if cached</span></div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-fe">Append new msg to Signal<br>Dedup by ID<br>UI updates instantly</div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— Network Drop —</div>
+
+    <div class="node node-fe">window <code>offline</code> event<br>forceClientStop()<br>Status: <b style="color:#fbbf24">🟡 Reconnecting…</b></div>
+
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+
+    <div class="section-label">— After Reconnect —</div>
+
+    <div class="node node-fe">Status: <b style="color:#4ade80">🟢 Connected</b><br>Missed msgs loaded<br>localPointer updated</div>
+    <div class="arrow-down">↓</div>
+
+    <div class="node node-end">✓✓ Read shown<br>when ALL members<br>confirm receipt<br><b>Zero Data Loss</b></div>
+  </div>
+
+</div>
+
+<div style="display:flex;gap:16px;justify-content:center;margin-top:20px;flex-wrap:wrap;">
+  <span style="font-size:10px;color:#475569;background:#0f1117;padding:4px 10px;border:1px solid #1e293b;border-radius:20px;">🟣 Hardware/NIC</span>
+  <span style="font-size:10px;color:#475569;background:#0f1117;padding:4px 10px;border:1px solid #1e293b;border-radius:20px;">🔵 OS Kernel/TCP</span>
+  <span style="font-size:10px;color:#475569;background:#0f1117;padding:4px 10px;border:1px solid #1e293b;border-radius:20px;">🟡 SignalR Library</span>
+  <span style="font-size:10px;color:#475569;background:#0f1117;padding:4px 10px;border:1px solid #1e293b;border-radius:20px;">🟢 .NET 8 Backend</span>
+  <span style="font-size:10px;color:#475569;background:#0f1117;padding:4px 10px;border:1px solid #1e293b;border-radius:20px;">🔴 Angular Frontend</span>
+</div>
+
+</body>
+</html>

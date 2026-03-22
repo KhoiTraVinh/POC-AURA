@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using POC.AURA.Api.Data;
 using POC.AURA.Api.Entities;
 using POC.AURA.Api.Hubs;
-using POC.AURA.Api.Infrastructure;
 using POC.AURA.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -17,8 +16,7 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Register newly refactored services implementing design patterns
-builder.Services.AddSingleton<IConnectionManager, ConnectionManager>();
+// Register services
 builder.Services.AddScoped<IMessageService, MessageService>();
 
 builder.Services.AddSignalR(options =>

@@ -9,7 +9,6 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
 import { Subject, takeUntil } from 'rxjs';
 import { ChatService } from '../../core/services/chat.service';
 import { ConnectionStatus, MessageDto } from '../../core/services/chat.types';
@@ -42,7 +41,6 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   constructor(
     private readonly chatService: ChatService,
-    private readonly http: HttpClient,
   ) {}
 
   ngOnInit(): void {

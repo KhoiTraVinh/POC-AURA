@@ -1,10 +1,9 @@
 using Microsoft.AspNetCore.SignalR;
-using POC.AURA.Api.Infrastructure;
 using POC.AURA.Api.Services;
 
 namespace POC.AURA.Api.Hubs;
 
-public class ChatHub(IConnectionManager connectionManager, IMessageService messageService) : Hub
+public class ChatHub(IMessageService messageService) : Hub
 {
     public override async Task OnConnectedAsync()
     {
@@ -13,29 +12,19 @@ public class ChatHub(IConnectionManager connectionManager, IMessageService messa
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        // Auto-leave group — avoid receiving signals after connection is lost
-        var groupId = connectionManager.GetGroupId(Context.ConnectionId);
-        if (groupId != null)
-        {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupId);
-            connectionManager.RemoveConnection(Context.ConnectionId);
-        }
-
+        // SignalR automatically removes the connection from all groups on disconnect.
+        // No manual cleanup needed.
         await base.OnDisconnectedAsync(exception);
     }
 
     public async Task JoinGroup(int groupId)
     {
-        var groupName = groupId.ToString();
-        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
-        connectionManager.AddConnection(Context.ConnectionId, groupName);
+        await Groups.AddToGroupAsync(Context.ConnectionId, groupId.ToString());
     }
 
     public async Task LeaveGroup(int groupId)
     {
-        var groupName = groupId.ToString();
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
-        connectionManager.RemoveConnection(Context.ConnectionId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupId.ToString());
     }
 
     /// <summary>

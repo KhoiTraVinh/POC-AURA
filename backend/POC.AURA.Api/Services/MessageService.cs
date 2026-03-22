@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using POC.AURA.Api.Data;
 using POC.AURA.Api.DTOs;
+using POC.AURA.Api.Entities;
 using POC.AURA.Api.Factories;
 using POC.AURA.Api.Hubs;
 
@@ -67,6 +68,13 @@ public class MessageService(
 
     public async Task UpdateReadReceiptAsync(int groupId, int staffId, int lastReadMessageId)
     {
+        // Auto-seed Member for POC testing (Because there is no Add Member API)
+        var member = await dbContext.Members.FirstOrDefaultAsync(m => m.GroupId == groupId && m.StaffId == staffId);
+        if (member == null)
+        {
+            dbContext.Members.Add(new Member { GroupId = groupId, StaffId = staffId });
+        }
+
         var receipt = await dbContext.ReadReceipts
             .FirstOrDefaultAsync(r => r.GroupId == groupId && r.StaffId == staffId);
 
@@ -77,33 +85,41 @@ public class MessageService(
         }
         else
         {
-            if (receipt.LastReadMessageId >= lastReadMessageId)
-                return; // Nothing to update
-                
-            receipt.LastReadMessageId = lastReadMessageId;
+            // Update only if pointer moved forward
+            if (receipt.LastReadMessageId < lastReadMessageId)
+            {
+                receipt.LastReadMessageId = lastReadMessageId;
+            }
         }
 
         await dbContext.SaveChangesAsync();
 
-        // Implement logic: "tất cả mọi người trong group xem hết rồi mới hiện đã xem"
         // Calculate the minimum ReadReceipt across all members in the group
         var memberCount = await dbContext.Members.CountAsync(m => m.GroupId == groupId);
         
         int groupReadPointer = 0;
         if (memberCount > 0)
         {
-            var groupReceipts = await dbContext.ReadReceipts
+            var receiptStats = await dbContext.ReadReceipts
                 .Where(r => r.GroupId == groupId)
-                .ToListAsync();
+                .GroupBy(r => r.GroupId)
+                .Select(g => new 
+                {
+                    Count = g.Count(),
+                    MinLastRead = g.Min(r => r.LastReadMessageId)
+                })
+                .FirstOrDefaultAsync();
 
-            // If not everyone has a receipt, the minimum pointer is 0 (since some members haven't read anything)
-            if (groupReceipts.Count == memberCount)
+            // If everyone has a receipt, find the minimum pointer
+            // Zero RAM allocation for entities! Processed 100% on DB layer.
+            if (receiptStats != null && receiptStats.Count == memberCount)
             {
-                groupReadPointer = groupReceipts.Min(r => r.LastReadMessageId) ?? 0;
+                groupReadPointer = receiptStats.MinLastRead ?? 0;
             }
         }
 
-        // Broadcast the group's ALL-READ pointer to the group instead of the individual user's
+        // ALWAYS broadcast the group's ALL-READ pointer (even if local pointer didn't change)
+        // This ensures a newly refreshed browser tab gets the latest group pointer immediately.
         await hubContext.Clients.Group(groupId.ToString())
             .SendAsync("UserReadReceipt", new { staffId, messageId = groupReadPointer });
     }
