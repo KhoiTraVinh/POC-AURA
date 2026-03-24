@@ -1,17 +1,11 @@
 {
   "version": "2.0.0",
   "tasks": [
+    // ─── Infrastructure ──────────────────────────────────────────────────
     {
       "label": "docker: up (prod)",
       "type": "shell",
       "command": "docker compose up --build",
-      "group": "build",
-      "presentation": { "reveal": "always", "panel": "new" }
-    },
-    {
-      "label": "docker: up (dev)",
-      "type": "shell",
-      "command": "docker compose -f docker-compose.dev.yml up --build",
       "group": "build",
       "presentation": { "reveal": "always", "panel": "new" }
     },
@@ -21,25 +15,8 @@
       "command": "docker compose down && docker compose -f docker-compose.dev.yml down",
       "presentation": { "reveal": "always", "panel": "shared" }
     },
-    {
-      "label": "docker: logs backend",
-      "type": "shell",
-      "command": "docker compose logs -f backend",
-      "presentation": { "reveal": "always", "panel": "new" }
-    },
-    {
-      "label": "docker: logs frontend",
-      "type": "shell",
-      "command": "docker compose logs -f frontend",
-      "presentation": { "reveal": "always", "panel": "new" }
-    },
-    {
-      "label": "docker: dev up (background)",
-      "type": "shell",
-      "command": "docker compose -f docker-compose.dev.yml up --build -d",
-      "group": "build",
-      "presentation": { "reveal": "always", "panel": "shared" }
-    },
+
+    // ─── Build ───────────────────────────────────────────────────────────
     {
       "label": "build: backend",
       "type": "process",
@@ -54,7 +31,22 @@
       "presentation": { "reveal": "silent", "panel": "shared" }
     },
     {
-      "label": "run: backend (dotnet watch)",
+      "label": "build: blazor",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj",
+        "--configuration", "Debug"
+      ],
+      "group": "build",
+      "problemMatcher": "$msCompile",
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+
+    // ─── Run (hot-reload) ─────────────────────────────────────────────────
+    {
+      "label": "run: backend",
       "type": "shell",
       "command": "cd /workspace/backend && DOTNET_USE_POLLING_FILE_WATCHER=true dotnet watch run --project POC.AURA.Api/POC.AURA.Api.csproj --urls http://0.0.0.0:5000",
       "group": "build",
@@ -63,7 +55,16 @@
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "run: frontend (ng serve)",
+      "label": "run: blazor",
+      "type": "shell",
+      "command": "cd /workspace/blazor && DOTNET_USE_POLLING_FILE_WATCHER=true dotnet watch run --project POC.AURA.SmartHub/POC.AURA.SmartHub.csproj --urls http://0.0.0.0:5001",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new", "group": "devservers" },
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "run: frontend",
       "type": "shell",
       "command": "cd /workspace/frontend && npm start",
       "group": "build",
@@ -73,9 +74,23 @@
     },
     {
       "label": "run: full stack",
-      "dependsOn": ["run: backend (dotnet watch)", "run: frontend (ng serve)"],
+      "dependsOn": ["run: backend", "run: blazor", "run: frontend"],
       "group": { "kind": "build", "isDefault": true },
       "presentation": { "reveal": "always" }
+    },
+
+    // ─── Logs (prod) ──────────────────────────────────────────────────────
+    {
+      "label": "docker: logs backend",
+      "type": "shell",
+      "command": "docker compose logs -f backend",
+      "presentation": { "reveal": "always", "panel": "new" }
+    },
+    {
+      "label": "docker: logs blazor",
+      "type": "shell",
+      "command": "docker compose logs -f blazor",
+      "presentation": { "reveal": "always", "panel": "new" }
     }
   ]
 }

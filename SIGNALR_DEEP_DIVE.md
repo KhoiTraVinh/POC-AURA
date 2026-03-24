@@ -124,3 +124,167 @@ Khi bị hỏi về hiệu năng: *"Sử dụng cái này trên máy khách yế
 3. **RAM**: Rất nhỏ gọn. Không nạp file nặng qua WebSockets, SignalR chỉ giao nhiệm vụ truyền đi mỗi cặp Key-Value siêu bé `{ JobId = 123 }`. Còn việc down file PDF trăm megabyte được nhường cho `HttpClient` chạy độc lập, download và xả xuống Disk tự động xong dọn RAM (Garbage Collector).
 
 Đây là cách chuẩn hóa tốt nhất (Best Practice) cho giao thức Real-time của IoT và In ấn phân tán.
+
+---
+
+## 7. Multi-Tenant Isolation qua JWT + SignalR Groups
+
+### Bài toán
+Một server chạy một `PrintHub` duy nhất nhưng phải phục vụ nhiều tenant hoàn toàn độc lập. Print job của TenantA tuyệt đối không được đến SmartHub của TenantB.
+
+### Cơ chế (Under the hood)
+
+**Bước 1 — JWT Claim làm "Passport":**
+```csharp
+// Client gọi POST /api/auth/token { tenantId: "A", clientType: "ui" }
+// Server tạo JWT với claims:
+new Claim("tenant_id", "A"),
+new Claim("client_type", "ui"),
+```
+JWT được ký bằng `HS256` với secret key. Client **không thể sửa claim** vì sẽ làm hỏng chữ ký — server sẽ reject.
+
+**Bước 2 — SignalR đọc token từ query string:**
+```csharp
+OnMessageReceived = context => {
+    var accessToken = context.Request.Query["access_token"];
+    if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+        context.Token = accessToken;
+    return Task.CompletedTask;
+};
+```
+WebSocket không hỗ trợ HTTP headers → token phải nằm trong query string. Middleware đọc và đưa vào pipeline trước khi Hub nhận connection.
+
+**Bước 3 — Hub tự phân luồng vào Group:**
+```csharp
+public override async Task OnConnectedAsync() {
+    var group = $"{ClientType}-{TenantId}";  // "ui-A" hoặc "smarthub-A"
+    await Groups.AddToGroupAsync(Context.ConnectionId, group);
+}
+```
+`ConcurrentDictionary` trong SignalR's `GroupManager` ghi nhận: `connectionId → Set<groupName>`. Khi server gọi `Clients.Group("smarthub-A").SendAsync(...)`, chỉ các connection trong set đó nhận được message.
+
+**Bước 4 — Route message theo tenant:**
+```csharp
+// SubmitPrintJob chỉ route tới smarthub-{TenantId} — không bao giờ cross-tenant
+await Clients.Group($"smarthub-{TenantId}").SendAsync("ExecutePrintJob", job);
+```
+
+**Đánh giá System Resources:**
+- **RAM**: `GroupManager` là một `ConcurrentDictionary<string, HubConnectionStore>`. Mỗi entry tốn vài KB. 1000 tenant với 2 group mỗi tenant = ~2000 entries = vài MB RAM.
+- **CPU**: Group lookup = O(1) hash lookup. Broadcast = iterate over connection set — O(n connections trong group).
+- **Security**: Isolation nằm ở Server-Side Groups, không phải client logic → không thể bypass từ frontend.
+
+---
+
+## 8. Fail-Fast Pessimistic Lock: SemaphoreSlim(1,1) + Wait(0)
+
+### Bài toán
+Bank xử lý tuần tự — chỉ 1 transaction tại một thời điểm. Nếu dùng `WaitAsync()`, các request sẽ xếp hàng trong memory → memory leak khi load cao.
+
+### So sánh dưới tầng OS
+
+**Cách nguy hiểm — `WaitAsync(cancellationToken)`:**
+```csharp
+await _semaphore.WaitAsync(ct);  // ← Task bị treo, nằm trong semaphore's waiter list
+```
+Bên trong `SemaphoreSlim`, có một `LinkedList<TaskCompletionSource>` chứa tất cả Task đang chờ. Mỗi task treo = 1 entry trong linked list = bộ nhớ bị giữ. Nếu 10.000 request đến trong 1 giây → 10.000 TaskCompletionSource objects tồn tại trên Heap → GC áp lực → OOM.
+
+**Cách an toàn — `Wait(0)`:**
+```csharp
+if (!_bankLock.Wait(0)) {
+    return new TransactionSubmitResult(..., "rejected", ...);
+}
+```
+`Wait(0)` là một **synchronous non-blocking call** — gọi OS syscall kiểm tra semaphore count ngay lập tức:
+- Nếu count > 0: decrement và return `true` (bank free, ta chiếm lock)
+- Nếu count = 0: return `false` ngay (bank busy, không chờ, không tạo Task)
+
+**Bên dưới tầng OS (Windows IOCP):**
+- `SemaphoreSlim` trong .NET không dùng Kernel Semaphore object mà dùng **Interlocked operations** trên một `volatile int _currentCount`.
+- `Wait(0)` thực chất là: `Interlocked.CompareExchange(ref _currentCount, currentCount - 1, currentCount)` — một atomic CPU instruction (`LOCK CMPXCHG` trên x86).
+- Nếu thành công: thực thi trong **1 CPU cycle** — không có context switch, không có Kernel call.
+- Nếu thất bại: trả về false ngay — không tốn thêm gì.
+
+**Tương đương trong DB:**
+```sql
+-- Oracle
+SELECT * FROM transactions WHERE status = 'pending' FOR UPDATE NOWAIT;
+-- → ORA-00054 nếu locked
+
+-- PostgreSQL
+SELECT * FROM transactions WHERE id = 1 FOR UPDATE SKIP LOCKED;
+```
+
+**Đánh giá System Resources:**
+- **CPU**: 1 atomic instruction cho mỗi request bị reject — không thể nhẹ hơn.
+- **RAM**: Zero allocation khi reject — không tạo Task, không tạo object nào.
+- **Throughput**: Bank nhận và reject 100.000 concurrent requests/giây mà không OOM.
+
+---
+
+## 9. Field-Level Pessimistic Lock: ConcurrentDictionary + TTL + Heartbeat
+
+### Bài toán
+Nhiều user edit cùng một form/document — cần đảm bảo chỉ 1 người edit mỗi field tại một thời điểm, nhưng lock phải tự hủy nếu user "biến mất" (tab crash, mất điện).
+
+### Cơ chế lưu trữ
+
+```csharp
+// Key: "docId:fieldId" → Value: FieldLockEntry { UserId, ConnectionId, ExpiresAt }
+private readonly ConcurrentDictionary<string, FieldLockEntry> _locks = new();
+```
+
+`ConcurrentDictionary` cho phép **lock-free reads** — nhiều thread đọc đồng thời không block nhau. Ghi dùng **Compare-And-Swap (CAS)** internally.
+
+**Acquire lock — `AddOrUpdate`:**
+```csharp
+_locks.AddOrUpdate(
+    key,
+    addValueFactory: _ => { acquired = true; return newEntry; },
+    updateValueFactory: (_, existing) => {
+        if (existing.UserId == userId || existing.ExpiresAt < DateTime.UtcNow) {
+            acquired = true; return newEntry;  // Override expired lock
+        }
+        existingHolder = existing; return existing;  // Keep existing
+    });
+```
+`AddOrUpdate` trong `ConcurrentDictionary` là **atomic** — không có race condition giữa "check + set". Hai user click cùng lúc: một người thắng (CAS thành công), người kia thua (CAS thất bại, retry với updated value).
+
+### TTL + Heartbeat (Preventing Stale Locks)
+
+**Vấn đề:** Nếu user đang edit và trình duyệt crash → lock bị "orphaned" — không ai có thể edit field đó nữa.
+
+**Giải pháp:**
+```typescript
+// Frontend heartbeat mỗi 8s
+const timer = setInterval(() => {
+    hub.invoke('HeartbeatFieldLock', docId, fieldId);
+}, 8000);
+```
+```csharp
+// Backend gia hạn TTL
+existing with { ExpiresAt = DateTime.UtcNow.AddSeconds(30) }
+```
+
+**Background cleanup timer:**
+```csharp
+// Chạy mỗi 5s — quét và dọn locks hết hạn
+_cleanupTimer = new Timer(CleanupExpired, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+```
+`System.Threading.Timer` sử dụng **OS TimerQueue** (tương tự `setTimeout` trong JS) — không tốn CPU khi idle, chỉ wake up đúng lúc cần.
+
+### Auto-Release on Disconnect
+
+```csharp
+public override async Task OnDisconnectedAsync(Exception? exception) {
+    var released = _locks.ReleaseAllByConnection(Context.ConnectionId);
+    foreach (var fieldLock in released)
+        await Clients.Others.SendAsync("FieldUnlocked", new { fieldLock.DocId, fieldLock.FieldId });
+}
+```
+SignalR tự gọi `OnDisconnectedAsync` khi WebSocket đóng — dù lý do là gì (đóng tab, crash, mất mạng). Đây là nơi duy nhất cần cleanup — không cần client gọi "logout".
+
+**Đánh giá System Resources:**
+- **RAM**: `ConcurrentDictionary` với N active locks = N objects nhỏ (~100 bytes mỗi entry). 1000 user đang edit = ~100KB RAM.
+- **CPU**: Heartbeat 8s × N users = N SignalR invocations/8s — rất nhẹ. Cleanup timer 5s = O(N) iterate dictionary.
+- **Correctness**: CAS đảm bảo không có 2 user nào cùng acquire lock trong cùng 1 field — tuyệt đối an toàn race condition.

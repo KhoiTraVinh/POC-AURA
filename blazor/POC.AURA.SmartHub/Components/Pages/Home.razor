@@ -1,0 +1,178 @@
+@page "/"
+@rendermode InteractiveServer
+@inject PrintHubService Hub
+@implements IAsyncDisposable
+
+<div class="page">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <h1>SmartHub — Print Machine Simulator</h1>
+    <p class="desc">
+      Blazor Server app. Connects to the backend's <code>PrintHub</code> via SignalR
+      as a <strong>smarthub</strong> client. Receives print jobs from Angular UI,
+      marks them Done or Failed, and reports results back through the hub.
+    </p>
+  </div>
+
+  <!-- ── Connection Panel ───────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Connection</div>
+
+    @if (Hub.Status == "disconnected")
+    {
+      <div class="form-row">
+        <div class="field">
+          <label>Tenant ID</label>
+          <select @bind="tenantId" class="input">
+            <option value="TenantA">TenantA</option>
+            <option value="TenantB">TenantB</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>User Name</label>
+          <input @bind="userName" placeholder="e.g. Printer-01" class="input" />
+        </div>
+        <div class="field field-btn">
+          <button class="btn btn-primary" @onclick="ConnectAsync">Connect</button>
+        </div>
+      </div>
+    }
+    else
+    {
+      <div class="conn-info">
+        <span class="badge @StatusClass">@Hub.Status.ToUpper()</span>
+        <span class="conn-detail">Tenant: <strong>@Hub.TenantId</strong></span>
+        <span class="conn-detail">User: <strong>@Hub.UserName</strong></span>
+        <button class="btn btn-danger" @onclick="DisconnectAsync">Disconnect</button>
+      </div>
+    }
+  </div>
+
+  @if (Hub.Status == "connected" || Hub.PendingJobs.Count > 0 || Hub.CompletedJobs.Count > 0)
+  {
+    <!-- ── Pending Jobs ───────────────────────────────────────────────────── -->
+    <div class="card">
+      <div class="card-title">
+        Pending Jobs
+        @if (Hub.PendingJobs.Count > 0)
+        {
+          <span class="count-badge">@Hub.PendingJobs.Count</span>
+        }
+      </div>
+
+      @if (Hub.PendingJobs.Count == 0)
+      {
+        <div class="empty">Waiting for print jobs from Angular UI...</div>
+      }
+      else
+      {
+        <div class="job-list">
+          @foreach (var job in Hub.PendingJobs.ToList())
+          {
+            <div class="job-item">
+              <div class="job-meta">
+                <span class="job-id">#@job.Id</span>
+                <span class="job-name">@job.DocumentName</span>
+                <span class="job-copies">x@job.Copies</span>
+                <span class="job-tenant">[@job.TenantId]</span>
+                <span class="job-time">@DateTime.Parse(job.CreatedAt.ToString()).ToLocalTime().ToString("HH:mm:ss")</span>
+              </div>
+              <div class="job-content">@job.Content</div>
+              <div class="job-actions">
+                <button class="btn btn-success btn-sm" @onclick="() => CompleteAsync(job, true)">
+                  ✓ Done
+                </button>
+                <button class="btn btn-danger btn-sm" @onclick="() => CompleteAsync(job, false)">
+                  ✗ Fail
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- ── Completed Jobs ─────────────────────────────────────────────────── -->
+    @if (Hub.CompletedJobs.Count > 0)
+    {
+      <div class="card">
+        <div class="card-title">Completed Jobs (last @Math.Min(Hub.CompletedJobs.Count, 10))</div>
+        <div class="completed-list">
+          @foreach (var (result, time) in Hub.CompletedJobs.TakeLast(10).Reverse())
+          {
+            <div class="completed-item @(result.Success ? "completed-ok" : "completed-fail")">
+              <span>@(result.Success ? "✓" : "✗")</span>
+              <span class="job-id">#@result.JobId</span>
+              <span>@result.Message</span>
+              <span class="completed-time">@time.ToString("HH:mm:ss")</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  }
+
+  <!-- ── Activity Log ───────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Activity Log</div>
+    <div class="log-box">
+      @foreach (var (level, msg, time) in Hub.Logs.TakeLast(30).Reverse())
+      {
+        <div class="log-entry log-@level">
+          <span class="log-time">@time.ToString("HH:mm:ss")</span>
+          <span>@msg</span>
+        </div>
+      }
+      @if (Hub.Logs.Count == 0)
+      {
+        <div class="log-empty">No activity yet.</div>
+      }
+    </div>
+  </div>
+
+</div>
+
+@code {
+    private string tenantId = "TenantA";
+    private string userName = "Printer-01";
+
+    protected override void OnInitialized()
+    {
+        Hub.StateChanged += OnHubStateChanged;
+    }
+
+    private void OnHubStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ConnectAsync()
+    {
+        await Hub.ConnectAsync(tenantId, userName);
+    }
+
+    private async Task DisconnectAsync()
+    {
+        await Hub.DisconnectAsync();
+    }
+
+    private async Task CompleteAsync(PrintJob job, bool success)
+    {
+        await Hub.ReportCompleteAsync(job, success);
+    }
+
+    private string StatusClass => Hub.Status switch
+    {
+        "connected"    => "badge-green",
+        "connecting"   => "badge-yellow",
+        "reconnecting" => "badge-yellow",
+        _              => "badge-gray"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.StateChanged -= OnHubStateChanged;
+        await Hub.DisconnectAsync();
+    }
+}

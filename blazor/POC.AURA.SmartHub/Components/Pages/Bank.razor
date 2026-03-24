@@ -1,0 +1,158 @@
+@page "/bank"
+@rendermode InteractiveServer
+@inject BankHubService BankSvc
+@implements IAsyncDisposable
+
+<div class="page">
+
+  <div class="page-header">
+    <h1>Bank Processor — Transaction Engine</h1>
+    <p class="desc">
+      Blazor Server kết nối với backend <code>TransactionHub</code> với vai trò
+      <strong>Bank Processor</strong>. Angular UI chỉ gửi lệnh — Blazor tự động
+      xử lý (verify, approve/decline) rồi report kết quả qua HTTP POST về backend.
+    </p>
+    <div class="arch-note">
+      <strong>Flow:</strong>
+      Angular <code>SubmitTransaction</code> →
+      Server acquire lock + route <code>ExecuteTransaction</code> → <strong>Blazor</strong> xử lý (3–7s) →
+      <code>POST /api/transaction/complete</code> → Server release lock + broadcast → Angular nhận kết quả
+    </div>
+  </div>
+
+  <!-- Connection -->
+  <div class="card">
+    <div class="card-title">Connection</div>
+
+    @if (BankSvc.Status == "disconnected")
+    {
+      <div class="form-row">
+        <div class="field">
+          <label>Tenant ID</label>
+          <select @bind="tenantId" class="input">
+            <option value="TenantA">TenantA</option>
+            <option value="TenantB">TenantB</option>
+            <option value="TenantC">TenantC</option>
+          </select>
+        </div>
+        <div class="field field-btn">
+          <button class="btn btn-primary" @onclick="ConnectAsync">
+            Connect as Bank Processor
+          </button>
+        </div>
+      </div>
+    }
+    else
+    {
+      <div class="conn-info">
+        <span class="badge @StatusClass">@BankSvc.Status.ToUpper()</span>
+        <span class="conn-detail">Tenant: <strong>@BankSvc.TenantId</strong></span>
+        <span class="conn-detail">Group: <strong>bank-@BankSvc.TenantId</strong></span>
+        <button class="btn btn-danger" @onclick="DisconnectAsync">Disconnect</button>
+      </div>
+    }
+  </div>
+
+  @if (BankSvc.Status != "disconnected")
+  {
+    <!-- Currently Processing -->
+    <div class="card">
+      <div class="card-title">
+        Currently Processing
+        @if (BankSvc.ProcessingQueue.Count > 0)
+        {
+          <span class="count-badge processing-pulse">@BankSvc.ProcessingQueue.Count</span>
+        }
+      </div>
+
+      @if (BankSvc.ProcessingQueue.Count == 0)
+      {
+        <div class="empty">Waiting for transactions from Angular UI...</div>
+      }
+      else
+      {
+        @foreach (var job in BankSvc.ProcessingQueue.ToList())
+        {
+          <div class="processing-item">
+            <div class="pi-spinner"></div>
+            <div class="pi-info">
+              <div class="pi-id">TXN-@job.TransactionId</div>
+              <div class="pi-desc">@job.Description</div>
+              <div class="pi-meta">@job.Amount.ToString("N0") @job.Currency &nbsp;·&nbsp; @job.SubmittedAt.ToLocalTime().ToString("HH:mm:ss")</div>
+            </div>
+            <div class="pi-status">Verifying...</div>
+          </div>
+        }
+      }
+    </div>
+
+    <!-- Completed -->
+    @if (BankSvc.CompletedJobs.Count > 0)
+    {
+      <div class="card">
+        <div class="card-title">Processed Transactions (last @Math.Min(BankSvc.CompletedJobs.Count, 10))</div>
+        <div class="completed-list">
+          @foreach (var (result, time) in BankSvc.CompletedJobs.TakeLast(10).Reverse())
+          {
+            <div class="completed-item @(result.Success ? "completed-ok" : "completed-fail")">
+              <span>@(result.Success ? "✓" : "✗")</span>
+              <span class="job-id">TXN-@result.TransactionId</span>
+              <span>@result.Message</span>
+              <span class="completed-time">@time.ToString("HH:mm:ss")</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  }
+
+  <!-- Log -->
+  <div class="card">
+    <div class="card-title">Activity Log</div>
+    <div class="log-box">
+      @foreach (var (level, msg, time) in BankSvc.Logs.TakeLast(30).Reverse())
+      {
+        <div class="log-entry log-@level">
+          <span class="log-time">@time.ToString("HH:mm:ss")</span>
+          <span>@msg</span>
+        </div>
+      }
+      @if (BankSvc.Logs.Count == 0)
+      {
+        <div class="log-empty">No activity yet.</div>
+      }
+    </div>
+  </div>
+
+</div>
+
+@code {
+    private string tenantId = "TenantA";
+
+    protected override void OnInitialized()
+    {
+        BankSvc.StateChanged += OnBankStateChanged;
+    }
+
+    private void OnBankStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ConnectAsync() => await BankSvc.ConnectAsync(tenantId);
+    private async Task DisconnectAsync() => await BankSvc.DisconnectAsync();
+
+    private string StatusClass => BankSvc.Status switch
+    {
+        "connected"    => "badge-green",
+        "connecting"   => "badge-yellow",
+        "reconnecting" => "badge-yellow",
+        _              => "badge-gray"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        BankSvc.StateChanged -= OnBankStateChanged;
+        await BankSvc.DisconnectAsync();
+    }
+}
