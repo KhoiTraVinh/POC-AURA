@@ -12,13 +12,14 @@ using IConnectionTracker = POC.AURA.Api.Services.IConnectionTracker;
 namespace POC.AURA.Api.Hubs;
 
 /// <summary>
-/// Unified multi-tenant hub for print jobs and bank transactions.
+/// Unified multi-tenant hub for print jobs, bank transactions, and collaborative document editing.
 /// <para>
 /// <b>Groups managed per connection:</b><br/>
-/// - <c>ui-{tenantId}</c>       — Angular browser clients<br/>
+/// - <c>ui-{tenantId}</c>       — Angular browser clients (per-tenant)<br/>
 /// - <c>smarthub-{tenantId}</c> — Blazor SmartHub print processors<br/>
 /// - <c>bank-{tenantId}</c>     — Blazor SmartHub bank processors<br/>
-/// - <c>ui-broadcast</c>        — All UI clients (global bank status broadcasts)
+/// - <c>ui-broadcast</c>        — All UI clients (global bank status broadcasts)<br/>
+/// - <c>doc-all</c>             — All UI clients (collaborative document lock events)
 /// </para>
 /// <para>
 /// All jobs are persisted to the <c>Messages</c> table via <see cref="IJobRepository"/>.
@@ -29,6 +30,7 @@ public class AuraHub : Hub
 {
     private readonly IJobRepository           _jobs;
     private readonly ITransactionQueueService _bank;
+    private readonly IDocumentLockService     _locks;
     private readonly IConnectionTracker       _tracker;
     private readonly ILogger<AuraHub>         _logger;
 
@@ -40,11 +42,13 @@ public class AuraHub : Hub
     public AuraHub(
         IJobRepository           jobs,
         ITransactionQueueService bank,
+        IDocumentLockService     locks,
         IConnectionTracker       tracker,
         ILogger<AuraHub>         logger)
     {
         _jobs    = jobs;
         _bank    = bank;
+        _locks   = locks;
         _tracker = tracker;
         _logger  = logger;
     }
@@ -61,9 +65,17 @@ public class AuraHub : Hub
         // Join the per-type-per-tenant group (e.g. "ui-TenantA")
         await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.For(ClientType, TenantId));
 
-        // UI clients also join the global broadcast group for bank status
         if (ClientType == ClientTypes.Ui)
+        {
+            // Join the global broadcast group for bank status updates
             await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.UiBroadcast);
+
+            // Join the global doc-all group for collaborative document lock events
+            await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.DocAll);
+
+            // Send a snapshot of all active field locks so the client is up to date immediately
+            await Clients.Caller.SendAsync(HubEvents.LockSnapshot, _locks.GetAllLocks());
+        }
 
         // Announce connection to all UI clients in the same tenant
         await Clients.Group(HubGroups.Ui(TenantId)).SendAsync(HubEvents.ClientConnected, new
@@ -90,7 +102,21 @@ public class AuraHub : Hub
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, HubGroups.For(ClientType, TenantId));
 
         if (ClientType == ClientTypes.Ui)
+        {
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, HubGroups.UiBroadcast);
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, HubGroups.DocAll);
+
+            // Auto-release all document field locks held by this connection
+            var released = _locks.ReleaseAllByConnection(Context.ConnectionId);
+            foreach (var fieldLock in released)
+            {
+                await Clients.Group(HubGroups.DocAll).SendAsync(HubEvents.FieldUnlocked, new
+                {
+                    fieldLock.DocId,
+                    fieldLock.FieldId
+                });
+            }
+        }
 
         await Clients.Group(HubGroups.Ui(TenantId)).SendAsync(HubEvents.ClientDisconnected, new
         {
@@ -179,6 +205,79 @@ public class AuraHub : Hub
     /// </returns>
     public Task<TransactionSubmitResult> SubmitTransaction(TransactionRequest request) =>
         _bank.TrySubmitAsync(TenantId, request, Context.ConnectionId);
+
+    // ── Collaborative Document ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Tries to acquire an exclusive edit lock on a document field.
+    /// Returns the result immediately (acquired/rejected) so the caller can
+    /// update its UI without waiting for a broadcast.
+    /// On success, broadcasts <see cref="HubEvents.FieldLocked"/> to all other UI clients.
+    /// </summary>
+    public async Task<LockAcquireResult> AcquireFieldLock(string docId, string fieldId)
+    {
+        var result = _locks.TryAcquire(docId, fieldId, UserName, UserName, Context.ConnectionId);
+
+        if (result.Acquired)
+        {
+            // Notify every other UI client that this field is now locked
+            await Clients.GroupExcept(HubGroups.DocAll, Context.ConnectionId)
+                .SendAsync(HubEvents.FieldLocked, new
+                {
+                    DocId    = docId,
+                    FieldId  = fieldId,
+                    UserId   = UserName,
+                    UserName,
+                    ExpiresAt = result.ExpiresAt
+                });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Releases a field lock. Only the lock holder can release.
+    /// Broadcasts <see cref="HubEvents.FieldUnlocked"/> to all UI clients on success.
+    /// </summary>
+    public async Task ReleaseFieldLock(string docId, string fieldId)
+    {
+        var released = _locks.Release(docId, fieldId, UserName);
+        if (released)
+        {
+            await Clients.Group(HubGroups.DocAll)
+                .SendAsync(HubEvents.FieldUnlocked, new { DocId = docId, FieldId = fieldId });
+        }
+    }
+
+    /// <summary>
+    /// Extends the TTL of an active field lock.
+    /// Must be called every ~8 s while the user is actively editing; lock TTL is 30 s.
+    /// </summary>
+    public void HeartbeatFieldLock(string docId, string fieldId)
+    {
+        _locks.Heartbeat(docId, fieldId, UserName);
+    }
+
+    /// <summary>
+    /// Broadcasts a real-time field value change to all other UI clients.
+    /// The caller must hold the lock; throws <see cref="HubException"/> otherwise.
+    /// </summary>
+    public async Task UpdateFieldValue(string docId, string fieldId, string value)
+    {
+        var currentLock = _locks.GetLock(docId, fieldId);
+        if (currentLock is null || currentLock.UserId != UserName)
+            throw new HubException("Cannot update field: you don't hold the lock");
+
+        await Clients.GroupExcept(HubGroups.DocAll, Context.ConnectionId)
+            .SendAsync(HubEvents.FieldValueChanged, new
+            {
+                DocId    = docId,
+                FieldId  = fieldId,
+                Value    = value,
+                UserId   = UserName,
+                UserName
+            });
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

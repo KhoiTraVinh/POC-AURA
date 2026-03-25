@@ -66,6 +66,11 @@ public static class HubGroups
     /// </summary>
     public const string UiBroadcast = "ui-broadcast";
 
+    /// <summary>
+    /// All UI clients participating in collaborative document editing.
+    /// Receives <c>FieldLocked</c>, <c>FieldUnlocked</c>, and <c>FieldValueChanged</c> events.
+    /// </summary>
+    public const string DocAll = "doc-all";
 }
 
 /// <summary>SignalR event names pushed from the backend to clients.</summary>
@@ -93,6 +98,22 @@ public static class HubEvents
 
     /// <summary>Full bank snapshot (isBankBusy, currentTransaction, history).</summary>
     public const string BankStatus              = "BankStatus";
+
+    // ── Collaborative Document ─────────────────────────────────────────────
+    /// <summary>Full snapshot of all active locks sent to a newly connected client.</summary>
+    public const string LockSnapshot        = "LockSnapshot";
+
+    /// <summary>Broadcast when a user acquires exclusive edit rights on a field.</summary>
+    public const string FieldLocked         = "FieldLocked";
+
+    /// <summary>Broadcast when a field lock is released (manual or TTL expiry).</summary>
+    public const string FieldUnlocked       = "FieldUnlocked";
+
+    /// <summary>Broadcast when the lock holder updates the field value in real-time.</summary>
+    public const string FieldValueChanged   = "FieldValueChanged";
+
+    /// <summary>Broadcast when one or more locks expire due to missed heartbeats.</summary>
+    public const string FieldsExpiredUnlocked = "FieldsExpiredUnlocked";
 
     // ── Connection ─────────────────────────────────────────────────────────
     public const string ClientConnected    = "ClientConnected";

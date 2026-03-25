@@ -28,5 +28,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/transaction-queue/transaction-queue.component').then((m) => m.TransactionQueueComponent),
   },
+  {
+    path: 'collab-doc',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/collaborative-doc/collaborative-doc.component').then((m) => m.CollaborativeDocComponent),
+  },
   { path: '**', redirectTo: 'login' },
 ];

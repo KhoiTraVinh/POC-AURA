@@ -43,6 +43,8 @@ builder.Services.AddScoped<IJobRepository, JobRepository>();
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<IConnectionTracker, ConnectionTracker>();
 builder.Services.AddSingleton<ITransactionQueueService, TransactionQueueService>();
+builder.Services.AddSingleton<IDocumentLockService, DocumentLockService>();
+builder.Services.AddHostedService(p => (DocumentLockService)p.GetRequiredService<IDocumentLockService>());
 
 // ── Authentication (JWT Bearer) ─────────────────────────────────────────────
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
