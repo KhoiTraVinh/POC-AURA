@@ -1,91 +1,130 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
-using POC.AURA.Api.Data;
+using POC.AURA.Api.Constants;
+using POC.AURA.Api.Extensions;
 using POC.AURA.Api.Hubs;
 using POC.AURA.Api.Models;
+using POC.AURA.Api.Repositories;
+using POC.AURA.Api.Services;
 
 namespace POC.AURA.Api.Controllers;
 
+/// <summary>
+/// HTTP API for the Blazor SmartHub print processor.
+/// <para>
+/// All endpoints require <c>client_type = "smarthub"</c> in the JWT.
+/// </para>
+/// <list type="bullet">
+///   <item><c>GET  /api/print/pending</c>  — Fetch unprocessed jobs on reconnect.</item>
+///   <item><c>POST /api/print/complete</c> — Report job done/failed; notifies Angular via SignalR.</item>
+/// </list>
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
 public class PrintController : ControllerBase
 {
-    private readonly AppDbContext _db;
-    private readonly IHubContext<PrintHub> _hub;
+    private readonly IJobRepository _jobs;
+    private readonly IHubContext<AuraHub> _hub;
+    private readonly IConnectionTracker _tracker;
     private readonly ILogger<PrintController> _logger;
 
-    private string TenantId => User.FindFirst("tenant_id")!.Value;
-    private string ClientType => User.FindFirst("client_type")!.Value;
+    private string TenantId   => User.GetTenantId();
+    private string ClientType  => User.GetClientType();
 
-    public PrintController(AppDbContext db, IHubContext<PrintHub> hub, ILogger<PrintController> logger)
+    public PrintController(
+        IJobRepository jobs,
+        IHubContext<AuraHub> hub,
+        IConnectionTracker tracker,
+        ILogger<PrintController> logger)
     {
-        _db = db;
-        _hub = hub;
-        _logger = logger;
+        _jobs    = jobs;
+        _hub     = hub;
+        _tracker = tracker;
+        _logger  = logger;
     }
 
     /// <summary>
-    /// GET /api/print/pending
-    /// Called by SmartHub on startup/reconnect to retrieve unprocessed jobs for its tenant.
-    /// Returns jobs with status = "pending".
+    /// Returns all <c>pending</c> print jobs for the caller's tenant.
+    /// Called by SmartHub on startup/reconnect to recover unprocessed work.
     /// </summary>
     [HttpGet("pending")]
     public async Task<IActionResult> GetPending()
     {
-        if (ClientType != "smarthub")
-            return Forbid();
+        if (ClientType != ClientTypes.SmartHub) return Forbid();
 
-        var jobs = await _db.PrintJobs
-            .Where(j => j.TenantId == TenantId && j.Status == "pending")
-            .OrderBy(j => j.CreatedAt)
-            .Select(j => new PrintJob(j.Id, j.TenantId, j.DocumentName, j.Content,
-                j.Copies, j.RequestorConnectionId, j.CreatedAt))
-            .ToListAsync();
+        var messages = await _jobs.GetPendingAsync(TenantId, MessageTypes.PrintJob);
+
+        var jobs = messages.Select(m =>
+        {
+            var p = JsonSerializer.Deserialize<JsonElement>(m.Payload ?? "{}");
+            return new PrintJob(
+                m.Ref,
+                m.TenantId!,
+                p.TryGetProperty("documentName", out var dn) ? dn.GetString() ?? "" : "",
+                p.TryGetProperty("content",      out var ct) ? ct.GetString() ?? "" : "",
+                p.TryGetProperty("copies",       out var cp) ? cp.GetInt32()       : 1,
+                m.RequestorConnectionId ?? "",
+                m.CreatedAt);
+        });
 
         return Ok(jobs);
     }
 
     /// <summary>
-    /// POST /api/print/complete
-    /// Called by SmartHub to report a print job as completed or failed.
-    /// Updates DB and notifies Angular UI via SignalR.
+    /// Marks a print job as <c>completed</c> or <c>failed</c> and notifies the
+    /// original Angular requestor via SignalR.
     /// </summary>
     [HttpPost("complete")]
     public async Task<IActionResult> Complete([FromBody] CompleteJobRequest req)
     {
-        if (ClientType != "smarthub")
-            return Forbid();
+        if (ClientType != ClientTypes.SmartHub) return Forbid();
 
-        var job = await _db.PrintJobs.FindAsync(req.JobId);
-        if (job == null || job.TenantId != TenantId)
+        var message = await _jobs.FindByRefAsync(req.JobId, TenantId, MessageTypes.PrintJob);
+        if (message is null)
             return NotFound(new { error = $"Job {req.JobId} not found for tenant {TenantId}" });
 
-        job.Status = req.Success ? "completed" : "failed";
-        job.CompletedAt = DateTime.UtcNow;
-        job.ResultMessage = req.Message;
-        await _db.SaveChangesAsync();
+        await _jobs.CompleteAsync(req.JobId, TenantId, MessageTypes.PrintJob, req.Success, req.Message);
 
         var result = new PrintJobResult(
-            job.Id,
-            job.TenantId,
-            job.RequestorConnectionId,
-            req.Success,
-            req.Message,
-            DateTime.UtcNow
-        );
+            message.Ref, TenantId,
+            message.RequestorConnectionId ?? "",
+            req.Success, req.Message, DateTime.UtcNow);
 
-        // Notify the original requester directly
-        await _hub.Clients.Client(job.RequestorConnectionId)
-            .SendAsync("PrintJobComplete", result);
+        // ── Route completion notification ────────────────────────────────────
+        // Look up all active connections that belong to the user who submitted
+        // the job. Using the stored userId (JWT 'name' claim) instead of the
+        // raw connectionId means the notification is delivered correctly even
+        // when the user has reconnected (and therefore has a different connectionId).
+        var submitterConnections = _tracker.GetConnectionIds(message.RequestorUserId ?? "");
 
-        // Broadcast to other UI clients in this tenant
-        await _hub.Clients.GroupExcept($"ui-{TenantId}", [job.RequestorConnectionId])
-            .SendAsync("PrintJobStatusUpdate", result);
+        if (submitterConnections.Count > 0)
+        {
+            // User is online — send PrintJobComplete directly to all of their tabs.
+            await _hub.Clients
+                .Clients(submitterConnections)
+                .SendAsync(HubEvents.PrintJobComplete, result);
 
-        _logger.LogInformation("[PrintAPI] Job {Id} {Status} for {TenantId}", job.Id, job.Status, TenantId);
+            // Notify every other UI client in the same tenant (status update only).
+            await _hub.Clients
+                .GroupExcept(HubGroups.Ui(TenantId), submitterConnections)
+                .SendAsync(HubEvents.PrintJobStatusUpdate, result);
+        }
+        else
+        {
+            // User is currently offline — broadcast to the whole tenant group so
+            // they see the result when they reconnect, and other online users are
+            // still informed via the same event.
+            _logger.LogInformation("[PrintAPI] Requestor {UserId} is offline; broadcasting to tenant group", message.RequestorUserId);
+            await _hub.Clients
+                .Group(HubGroups.Ui(TenantId))
+                .SendAsync(HubEvents.PrintJobComplete, result);
+        }
+
+        _logger.LogInformation("[PrintAPI] Job {Id} {Status} for {TenantId}",
+            req.JobId, req.Success ? "completed" : "failed", TenantId);
 
         return Ok(new { message = "Job completion recorded" });
     }

@@ -1,138 +1,102 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace POC.AURA.SmartHub.Services;
 
+/// <summary>Immutable snapshot of a bank job routed from AuraHub.</summary>
 public record BankJob(
-    string TransactionId,
-    string Description,
+    string  TransactionId,
+    string  Description,
     decimal Amount,
-    string Currency,
+    string  Currency,
     DateTime SubmittedAt
 );
 
+/// <summary>Result sent back to the backend after processing.</summary>
 public record BankJobResult(
     string TransactionId,
-    bool Success,
+    bool   Success,
     string Message
 );
 
-public class BankHubService : IAsyncDisposable
+/// <summary>
+/// Manages bank transaction processing for all configured tenants.
+/// <para>
+/// Extends <see cref="TenantHubServiceBase"/> and connects to AuraHub as <c>bank</c>.
+/// On receiving <c>ExecuteTransaction</c>, simulates bank verification (3–7 s) with
+/// a configurable 15% failure rate, then reports to <c>POST /api/transaction/complete</c>.
+/// </para>
+/// </summary>
+public sealed class BankHubService : TenantHubServiceBase
 {
-    private readonly IConfiguration _config;
-    private readonly ILogger<BankHubService> _logger;
-    private HubConnection? _hub;
-    private string _accessToken = string.Empty;
-    private string _backendUrl = string.Empty;
+    protected override string ClientType => "bank";
 
-    public string Status { get; private set; } = "disconnected";
-    public string TenantId { get; private set; } = string.Empty;
-
+    /// <summary>Transactions currently being processed.</summary>
     public List<BankJob> ProcessingQueue { get; } = [];
-    public List<(BankJobResult Result, DateTime Time)> CompletedJobs { get; } = [];
-    public List<(string Level, string Message, DateTime Time)> Logs { get; } = [];
 
-    public event Action? StateChanged;
+    /// <summary>Completed results, capped at the 50 most recent.</summary>
+    public List<(BankJobResult Result, DateTime Time)> CompletedJobs { get; } = [];
 
     public BankHubService(IConfiguration config, ILogger<BankHubService> logger)
+        : base(config, logger) { }
+
+    // ── TenantHubServiceBase ──────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    protected override void RegisterHandlers(HubConnection hub, string tenantId, string token)
     {
-        _config = config;
-        _logger = logger;
-    }
-
-    public async Task ConnectAsync(string tenantId)
-    {
-        if (_hub is not null)
-            await DisposeAsync();
-
-        TenantId = tenantId;
-        SetStatus("connecting");
-
-        _backendUrl = _config["Backend:Url"] ?? "http://backend:8080";
-
-        try
+        hub.On<BankJob>("ExecuteTransaction", job =>
         {
-            _accessToken = await GetTokenAsync(_backendUrl, tenantId);
-        }
-        catch (Exception ex)
-        {
-            SetStatus("disconnected");
-            AddLog("error", $"Auth failed: {ex.Message}");
-            _logger.LogError(ex, "Failed to get bank token for {TenantId}", tenantId);
-            return;
-        }
-
-        _hub = new HubConnectionBuilder()
-            .WithUrl($"{_backendUrl}/hubs/transaction", options =>
-            {
-                options.AccessTokenProvider = () => Task.FromResult<string?>(_accessToken);
-            })
-            .WithAutomaticReconnect()
-            .AddJsonProtocol(options =>
-            {
-                options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-                options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-            })
-            .Build();
-
-        _hub.Reconnecting += _ => { SetStatus("reconnecting"); return Task.CompletedTask; };
-        _hub.Reconnected += _ => { SetStatus("connected"); return Task.CompletedTask; };
-        _hub.Closed += _ => { SetStatus("disconnected"); return Task.CompletedTask; };
-
-        // Server routes to bank-{tenantId} group when a transaction is submitted
-        _hub.On<BankJob>("ExecuteTransaction", job =>
-        {
-            ProcessingQueue.Add(job);
-            AddLog("info", $"[IN] TXN-{job.TransactionId} \"{job.Description}\" {job.Amount:N0} {job.Currency}");
-            StateChanged?.Invoke();
-
-            // Fire-and-forget processing — hub callback must return immediately
-            _ = ProcessJobAsync(job);
+            lock (SyncLock) ProcessingQueue.Add(job);
+            AddLog("info",
+                $"[{tenantId}] [IN] TXN-{job.TransactionId} \"{job.Description}\" {job.Amount:N0} {job.Currency}");
+            _ = ProcessJobAsync(job, token);
         });
+    }
 
+    /// <inheritdoc/>
+    protected override async Task FetchPendingAsync(string tenantId, string token)
+    {
         try
         {
-            await _hub.StartAsync();
-            SetStatus("connected");
-            AddLog("success", $"Connected as Bank Processor — tenant: {tenantId}, group: bank-{tenantId}");
+            using var http = CreateHttpClient(token);
+            var txns = await http.GetFromJsonAsync<List<BankJob>>($"{BackendUrl}/api/transaction/pending");
+            if (txns is null || txns.Count == 0) return;
+
+            AddLog("info", $"[{tenantId}] Recovered {txns.Count} pending transaction(s) — processing...");
+
+            foreach (var job in txns)
+            {
+                lock (SyncLock)
+                {
+                    if (!ProcessingQueue.Any(j => j.TransactionId == job.TransactionId))
+                        ProcessingQueue.Add(job);
+                }
+                _ = ProcessJobAsync(job, token);
+            }
         }
         catch (Exception ex)
         {
-            SetStatus("disconnected");
-            AddLog("error", $"Connection failed: {ex.Message}");
-            _logger.LogError(ex, "Failed to connect to TransactionHub for {TenantId}", tenantId);
+            AddLog("error", $"[{tenantId}] Failed to fetch pending transactions: {ex.Message}");
         }
     }
 
-    public async Task DisconnectAsync()
+    // ── Processing ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Simulates bank verification then reports the result to the backend.
+    /// Failure rate: ~15% (for demo purposes).
+    /// </summary>
+    private async Task ProcessJobAsync(BankJob job, string token)
     {
-        if (_hub is not null)
-        {
-            await _hub.StopAsync();
-            await _hub.DisposeAsync();
-            _hub = null;
-        }
-        SetStatus("disconnected");
-        AddLog("warn", "Disconnected");
-    }
+        AddLog("info", $"Processing TXN-{job.TransactionId} — verifying...");
 
-    // ── Private helpers ────────────────────────────────────────────────────
+        await Task.Delay(Random.Shared.Next(3_000, 7_000));
 
-    private async Task ProcessJobAsync(BankJob job)
-    {
-        AddLog("info", $"[Processing] TXN-{job.TransactionId} — verifying...");
-        StateChanged?.Invoke();
-
-        // Simulate bank processing time (3–7 seconds)
-        var delayMs = Random.Shared.Next(3000, 7000);
-        await Task.Delay(delayMs);
-
-        // 85% success rate
-        var success = Random.Shared.NextDouble() > 0.15;
+        var success   = Random.Shared.NextDouble() > 0.15;
         var reference = Guid.NewGuid().ToString("N")[..8].ToUpper();
-        var message = success
+        var message   = success
             ? $"Approved. Bank Reference: TXN-{reference}"
             : "Declined: insufficient balance or fraud check failed";
 
@@ -140,12 +104,10 @@ public class BankHubService : IAsyncDisposable
 
         try
         {
-            // Report completion via HTTP POST /api/transaction/complete (requires Bearer token)
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
-            var body = new { TransactionId = job.TransactionId, Success = success, Message = message };
-            var resp = await http.PostAsJsonAsync($"{_backendUrl}/api/transaction/complete", body);
+            using var http = CreateHttpClient(token);
+            var resp = await http.PostAsJsonAsync(
+                $"{BackendUrl}/api/transaction/complete",
+                new { TransactionId = job.TransactionId, Success = success, Message = message });
             resp.EnsureSuccessStatusCode();
 
             AddLog(success ? "success" : "error",
@@ -153,48 +115,27 @@ public class BankHubService : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            AddLog("error", $"[OUT] Report failed: {ex.Message}");
-            _logger.LogError(ex, "Failed to report transaction complete for {Id}", job.TransactionId);
+            AddLog("error", $"[OUT] Report failed for TXN-{job.TransactionId}: {ex.Message}");
+            Logger.LogError(ex, "Failed to report transaction complete for {Id}", job.TransactionId);
         }
         finally
         {
-            ProcessingQueue.Remove(job);
-            CompletedJobs.Add((result, DateTime.Now));
-            if (CompletedJobs.Count > 50) CompletedJobs.RemoveAt(0);
-            StateChanged?.Invoke();
+            lock (SyncLock)
+            {
+                ProcessingQueue.Remove(job);
+                CompletedJobs.Add((result, DateTime.Now));
+                if (CompletedJobs.Count > 50) CompletedJobs.RemoveAt(0);
+            }
+            NotifyStateChanged();
         }
     }
 
-    private async Task<string> GetTokenAsync(string backendUrl, string tenantId)
-    {
-        using var http = new HttpClient();
-        var body = new { TenantId = tenantId, ClientType = "bank", UserName = $"BankProcessor-{tenantId}" };
-        var resp = await http.PostAsJsonAsync($"{backendUrl}/api/auth/token", body);
-        resp.EnsureSuccessStatusCode();
+    // ── Private ───────────────────────────────────────────────────────────
 
-        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        return json.GetProperty("accessToken").GetString()
-               ?? throw new InvalidOperationException("No accessToken in response");
-    }
-
-    private void SetStatus(string status)
+    private HttpClient CreateHttpClient(string token)
     {
-        Status = status;
-        StateChanged?.Invoke();
-    }
-
-    private void AddLog(string level, string message)
-    {
-        Logs.Add((level, message, DateTime.Now));
-        if (Logs.Count > 100) Logs.RemoveAt(0);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_hub is not null)
-        {
-            await _hub.DisposeAsync();
-            _hub = null;
-        }
+        var http = new HttpClient();
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return http;
     }
 }

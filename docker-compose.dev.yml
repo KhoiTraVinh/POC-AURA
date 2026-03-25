@@ -42,10 +42,14 @@ services:
       dockerfile: Dockerfile
     container_name: poc-aura-dev-workspace
     volumes:
-      - ..:/workspace:cached
+      - .:/workspace:cached
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER=1
+    ports:
+      - "4300:4300"   # Angular — accessible on LAN via 192.168.50.113:4300
+      - "5000:5000"   # Backend API
+      - "5001:5001"   # Blazor SmartHub
     networks:
       - poc-dev-network
     depends_on:

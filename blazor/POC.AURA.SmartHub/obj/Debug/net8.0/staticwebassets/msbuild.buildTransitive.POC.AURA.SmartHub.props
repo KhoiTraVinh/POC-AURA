@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="../buildMultiTargeting/POC.AURA.SmartHub.props" />
+</Project>

@@ -1,141 +1,163 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
-using POC.AURA.Api.Data;
-using POC.AURA.Api.Entities;
+using POC.AURA.Api.Constants;
 using POC.AURA.Api.Hubs;
 using POC.AURA.Api.Models;
+using POC.AURA.Api.Repositories;
 
 namespace POC.AURA.Api.Services;
 
 /// <summary>
-/// Per-tenant bank transaction service with fail-fast pessimistic locking.
-/// Each tenant has its own SemaphoreSlim(1,1): only one transaction per tenant at a time.
-/// Lock is held until SmartHub reports completion via HTTP API.
+/// Global bank transaction processor with fail-fast pessimistic locking.
+/// <para>
+/// The bank is a <b>single shared resource across ALL tenants</b> — only ONE
+/// transaction can be in-flight at any time, regardless of which tenant submitted it.
+/// </para>
+/// <para>
+/// Design decisions:<br/>
+/// - <b>Fail-fast</b>: <see cref="TrySubmitAsync"/> never blocks the caller. If the
+///   global lock cannot be acquired in 0 ms the request is immediately rejected.<br/>
+/// - <b>Fire-and-forget</b>: DB persistence and SmartHub routing run in the background
+///   after the lock is acquired, so the HTTP/SignalR response returns quickly.<br/>
+/// - <b>Lock released before broadcast</b>: allows the next submission to succeed
+///   while status events are still in flight to UI clients.
+/// </para>
 /// </summary>
-public class TransactionQueueService : ITransactionQueueService
+public sealed class TransactionQueueService : ITransactionQueueService
 {
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
-    private readonly ConcurrentDictionary<string, TransactionStatus?> _current = new();
-    private readonly ConcurrentDictionary<string, ConcurrentQueue<TransactionStatus>> _history = new();
-    private const int MaxHistory = 20;
+    // ── State ──────────────────────────────────────────────────────────────
+    private readonly SemaphoreSlim _globalLock   = new(1, 1);
+    private readonly object        _currentSync  = new();
+    private TransactionStatus?     _current;
 
-    private readonly IHubContext<TransactionHub> _hubContext;
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ConcurrentQueue<TransactionStatus> _history = new();
+    private const int MaxHistory = 50;
+
+    // ── Dependencies ───────────────────────────────────────────────────────
+    private readonly IHubContext<AuraHub>             _hub;
+    private readonly IServiceScopeFactory             _scopeFactory;
     private readonly ILogger<TransactionQueueService> _logger;
 
     public TransactionQueueService(
-        IHubContext<TransactionHub> hubContext,
+        IHubContext<AuraHub> hub,
         IServiceScopeFactory scopeFactory,
         ILogger<TransactionQueueService> logger)
     {
-        _hubContext = hubContext;
+        _hub          = hub;
         _scopeFactory = scopeFactory;
-        _logger = logger;
+        _logger       = logger;
     }
 
-    public async Task<TransactionSubmitResult> TrySubmitAsync(string tenantId, TransactionRequest request, string connectionId)
-    {
-        var @lock = _locks.GetOrAdd(tenantId, _ => new SemaphoreSlim(1, 1));
-        var current = _current.GetValueOrDefault(tenantId);
+    // ── ITransactionQueueService ───────────────────────────────────────────
 
-        if (!@lock.Wait(0))
+    /// <inheritdoc/>
+    public async Task<TransactionSubmitResult> TrySubmitAsync(
+        string tenantId, TransactionRequest request, string connectionId)
+    {
+        // Fail-fast: never block the caller
+        if (!_globalLock.Wait(0))
         {
-            var msg = current != null
-                ? $"Bank is busy processing [{current.Id}] \"{current.Description}\". Please try again."
-                : "Bank is currently busy. Please try again in a moment.";
-            _logger.LogInformation("[Bank:{Tenant}] REJECTED: bank busy", tenantId);
-            return new TransactionSubmitResult(null, "rejected", msg, current);
+            TransactionStatus? current;
+            lock (_currentSync) current = _current;
+
+            var reason = current is not null
+                ? $"Bank đang xử lý [{current.Id}] \"{current.Description}\". Vui lòng thử lại."
+                : "Bank đang bận. Vui lòng thử lại sau.";
+
+            _logger.LogInformation("[Bank] REJECTED {Tenant}: bank busy (current: {Id})",
+                tenantId, current?.Id ?? "unknown");
+
+            return new TransactionSubmitResult(null, "rejected", reason, current);
         }
 
-        var id = Guid.NewGuid().ToString("N")[..10].ToUpper();
-        var status = new TransactionStatus(id, "processing", request.Description, null, DateTime.UtcNow, null);
-        _current[tenantId] = status;
+        var id     = GenerateId();
+        var status = new TransactionStatus(id, "processing", request.Description,
+            null, DateTime.UtcNow, null);
 
-        _logger.LogInformation("[Bank:{Tenant}] ACCEPTED: TXN-{Id}", tenantId, id);
+        lock (_currentSync) _current = status;
 
-        // Save to DB then forward to SmartHub
+        _logger.LogInformation("[Bank] ACCEPTED {Tenant}: TXN-{Id}", tenantId, id);
+
+        // Persist + route to SmartHub in the background
         _ = SaveAndForwardAsync(tenantId, id, request, connectionId);
 
-        return new TransactionSubmitResult(id, "accepted", $"Transaction [{id}] accepted. Routing to bank processor.", status);
+        return new TransactionSubmitResult(
+            id, "accepted",
+            $"Transaction [{id}] accepted — routing to bank processor.",
+            status);
     }
 
+    /// <inheritdoc/>
     public async Task CompleteTransactionAsync(string tenantId, CompleteTransactionRequest req)
     {
-        var current = _current.GetValueOrDefault(tenantId);
-        if (current == null || current.Id != req.TransactionId)
+        TransactionStatus? current;
+        lock (_currentSync) current = _current;
+
+        if (current is null || current.Id != req.TransactionId)
         {
-            _logger.LogWarning("[Bank:{Tenant}] Complete called for unknown TXN-{Id}", tenantId, req.TransactionId);
+            _logger.LogWarning("[Bank] Complete called for unknown TXN-{Id}", req.TransactionId);
             return;
         }
 
-        var state = req.Success ? "completed" : "failed";
-        var finished = new TransactionStatus(current.Id, state, current.Description, req.Message, current.SubmittedAt, DateTime.UtcNow);
+        var state    = req.Success ? JobStatuses.Completed : JobStatuses.Failed;
+        var finished = new TransactionStatus(
+            current.Id, state, current.Description,
+            req.Message, current.SubmittedAt, DateTime.UtcNow);
 
-        GetHistory(tenantId).Enqueue(finished);
-        while (GetHistory(tenantId).Count > MaxHistory) GetHistory(tenantId).TryDequeue(out _);
+        _history.Enqueue(finished);
+        while (_history.Count > MaxHistory) _history.TryDequeue(out _);
 
-        // Update DB
+        // Update DB record via repository
         using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var record = await db.BankTransactions.FindAsync(req.TransactionId);
-        if (record != null)
-        {
-            record.Status = state;
-            record.CompletedAt = DateTime.UtcNow;
-            record.ResultMessage = req.Message;
-            await db.SaveChangesAsync();
-        }
+        var repo        = scope.ServiceProvider.GetRequiredService<IJobRepository>();
+        await repo.CompleteAsync(req.TransactionId, tenantId, MessageTypes.BankTransaction,
+            req.Success, req.Message ?? "");
 
-        _logger.LogInformation("[Bank:{Tenant}] TXN-{Id} {State}", tenantId, current.Id, state);
+        _logger.LogInformation("[Bank] TXN-{Id} {State} (tenant: {Tenant})", current.Id, state, tenantId);
 
-        await _hubContext.Clients.Group($"ui-{tenantId}").SendAsync("TransactionStatusChanged", new
-        {
-            Id = current.Id,
-            State = state,
-            Message = req.Message
-        });
+        // Release lock BEFORE broadcast so next submission is unblocked immediately
+        lock (_currentSync) _current = null;
+        _globalLock.Release();
+        _logger.LogInformation("[Bank] Global lock released");
 
-        _current[tenantId] = null;
-        _locks[tenantId].Release();
-
-        await BroadcastStatusAsync(tenantId);
-        _logger.LogInformation("[Bank:{Tenant}] Lock released", tenantId);
+        await BroadcastEventAsync(current.Id, state, req.Message);
+        await BroadcastStatusAsync();
     }
 
-    public TransactionHistoryStatus GetStatus(string tenantId) => new(
-        _locks.TryGetValue(tenantId, out var sem) && sem.CurrentCount == 0,
-        _current.GetValueOrDefault(tenantId),
-        GetHistory(tenantId).ToArray()
-    );
+    /// <inheritdoc/>
+    public TransactionHistoryStatus GetStatus() =>
+        new(_globalLock.CurrentCount == 0, _current, _history.ToArray());
 
-    private async Task SaveAndForwardAsync(string tenantId, string id, TransactionRequest request, string connectionId)
+    // ── Private ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Persists the job, notifies UI that the bank is busy, then routes to the
+    /// SmartHub bank processor. On any failure the lock is released and UI is notified.
+    /// </summary>
+    private async Task SaveAndForwardAsync(
+        string tenantId, string id, TransactionRequest request, string connectionId)
     {
         try
         {
+            var payload = JsonSerializer.Serialize(new
+            {
+                description = request.Description,
+                amount      = request.Amount,
+                currency    = request.Currency
+            });
+
             using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            db.BankTransactions.Add(new BankTransactionRecord
-            {
-                Id = id,
-                TenantId = tenantId,
-                Description = request.Description,
-                Amount = request.Amount,
-                Currency = request.Currency,
-                RequestorConnectionId = connectionId,
-                Status = "pending",
-                CreatedAt = DateTime.UtcNow
-            });
-            await db.SaveChangesAsync();
+            var repo        = scope.ServiceProvider.GetRequiredService<IJobRepository>();
+            await repo.SaveAsync(tenantId, MessageTypes.BankTransaction, id, payload, connectionId);
 
-            await _hubContext.Clients.Group($"ui-{tenantId}").SendAsync("TransactionStatusChanged", new
-            {
-                Id = id, State = "processing",
-                Message = $"Bank processing: {request.Description} ({request.Amount:N0} {request.Currency})"
-            });
-            await BroadcastStatusAsync(tenantId);
+            // Inform all UI clients the bank is now busy
+            await BroadcastEventAsync(id, "processing",
+                $"[{tenantId}] Processing: {request.Description} ({request.Amount:N0} {request.Currency})");
+            await BroadcastStatusAsync();
 
-            await _hubContext.Clients.Group($"bank-{tenantId}").SendAsync("ExecuteTransaction", new
+            // Route job to the SmartHub bank processor for this tenant
+            await _hub.Clients.Group(HubGroups.Bank(tenantId)).SendAsync(HubEvents.ExecuteTransaction, new
             {
                 TransactionId = id,
                 request.Description,
@@ -146,22 +168,23 @@ public class TransactionQueueService : ITransactionQueueService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[Bank:{Tenant}] Failed to forward TXN-{Id}", tenantId, id);
-            _current[tenantId] = null;
-            _locks[tenantId].Release();
+            _logger.LogError(ex, "[Bank] Failed to forward TXN-{Id}", id);
 
-            await _hubContext.Clients.Group($"ui-{tenantId}").SendAsync("TransactionStatusChanged", new
-            {
-                Id = id, State = "failed",
-                Message = "Bank processor unavailable"
-            });
-            await BroadcastStatusAsync(tenantId);
+            lock (_currentSync) _current = null;
+            _globalLock.Release();
+
+            await BroadcastEventAsync(id, JobStatuses.Failed, "Bank processor unavailable");
+            await BroadcastStatusAsync();
         }
     }
 
-    private Task BroadcastStatusAsync(string tenantId) =>
-        _hubContext.Clients.Group($"ui-{tenantId}").SendAsync("BankStatus", GetStatus(tenantId));
+    private Task BroadcastEventAsync(string id, string state, string message) =>
+        _hub.Clients.Group(HubGroups.UiBroadcast).SendAsync(HubEvents.TransactionStatusChanged,
+            new { Id = id, State = state, Message = message });
 
-    private ConcurrentQueue<TransactionStatus> GetHistory(string tenantId) =>
-        _history.GetOrAdd(tenantId, _ => new ConcurrentQueue<TransactionStatus>());
+    private Task BroadcastStatusAsync() =>
+        _hub.Clients.Group(HubGroups.UiBroadcast).SendAsync(HubEvents.BankStatus, GetStatus());
+
+    private static string GenerateId() =>
+        Guid.NewGuid().ToString("N")[..10].ToUpper();
 }

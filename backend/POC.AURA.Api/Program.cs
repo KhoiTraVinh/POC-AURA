@@ -5,8 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using POC.AURA.Api.Auth;
 using POC.AURA.Api.Data;
-using POC.AURA.Api.Entities;
 using POC.AURA.Api.Hubs;
+using POC.AURA.Api.Repositories;
 using POC.AURA.Api.Services;
 
 // Prevent ASP.NET Core from remapping standard JWT claim names (sub, name, ...)
@@ -22,12 +22,12 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new() { Title = "POC AURA - SignalR API", Version = "v1" });
+    c.SwaggerDoc("v1", new() { Title = "POC AURA — SignalR API", Version = "v1" });
     c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
     {
-        Name = "Authorization",
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
-        Scheme = "bearer",
+        Name         = "Authorization",
+        Type         = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme       = "bearer",
         BearerFormat = "JWT"
     });
 });
@@ -35,41 +35,37 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Register services
-builder.Services.AddScoped<IMessageService, MessageService>();
-builder.Services.AddSingleton<JwtService>();
+// ── Application services ────────────────────────────────────────────────────
+// Scoped: one instance per hub/controller invocation
+builder.Services.AddScoped<IJobRepository, JobRepository>();
 
-// Transaction: singleton only — no background worker needed (fail-fast, no queue)
+// Singletons: live for the entire application lifetime
+builder.Services.AddSingleton<JwtService>();
+builder.Services.AddSingleton<IConnectionTracker, ConnectionTracker>();
 builder.Services.AddSingleton<ITransactionQueueService, TransactionQueueService>();
 
-// Document Lock: singleton + background service (same instance)
-builder.Services.AddSingleton<DocumentLockService>();
-builder.Services.AddSingleton<IDocumentLockService>(sp => sp.GetRequiredService<DocumentLockService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<DocumentLockService>());
-
-// JWT Authentication for PrintHub
+// ── Authentication (JWT Bearer) ─────────────────────────────────────────────
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = JwtService.SigningKey,
-            ValidateIssuer = false,
-            ValidateAudience = false,
-            ClockSkew = TimeSpan.Zero // Strict 10-min expiry, no grace period
+            IssuerSigningKey         = JwtService.SigningKey,
+            ValidateIssuer           = false,
+            ValidateAudience         = false,
+            ClockSkew                = TimeSpan.Zero
         };
-        // SignalR sends token via query string (WebSocket doesn't support headers)
+        // SignalR sends the token via query string because WebSocket connections
+        // cannot carry custom headers.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
-                var accessToken = context.Request.Query["access_token"];
-                if (!string.IsNullOrEmpty(accessToken) &&
+                var token = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(token) &&
                     context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
-                {
-                    context.Token = accessToken;
-                }
+                    context.Token = token;
                 return Task.CompletedTask;
             }
         };
@@ -77,104 +73,82 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// ── SignalR ─────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR(options =>
 {
-    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
-    options.KeepAliveInterval = TimeSpan.FromDays(365);
+    options.EnableDetailedErrors  = builder.Environment.IsDevelopment();
+    // Set generous timeouts — the Blazor SmartHub client sets matching values.
+    // Default 30 s server timeout caused spurious disconnects under low traffic.
+    options.KeepAliveInterval     = TimeSpan.FromDays(365);
     options.ClientTimeoutInterval = TimeSpan.FromDays(365);
 })
-// C# records/anonymous types default to PascalCase in System.Text.Json.
-// Force camelCase so all hubs match the TypeScript interfaces on the frontend.
-// Affects ALL hubs: ChatHub, PrintHub, TransactionHub, DocumentHub.
+// Serialise hub payloads as camelCase to match TypeScript interfaces.
 .AddJsonProtocol(options =>
 {
-    options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    options.PayloadSerializerOptions.PropertyNamingPolicy      = JsonNamingPolicy.CamelCase;
+    options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
 });
 
+// ── CORS ────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAngular", policy =>
-    {
-        policy
-            .SetIsOriginAllowed(_ => true)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
-});
+    options.AddPolicy("AllowAll", policy =>
+        policy.SetIsOriginAllowed(_ => true)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials()));
 
 var app = builder.Build();
 
-// Auto-migrate on startup
+// ── Database migration (with retry for Docker startup ordering) ─────────────
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
-
+    var db      = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var logger  = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
     var retries = 5;
+
     while (retries-- > 0)
     {
         try
         {
             db.Database.Migrate();
-            logger.LogInformation("Database migration completed.");
-
-            if (!db.Groups.Any())
-            {
-                db.Groups.AddRange(
-                    new Group { GroupName = "Demo Group 1", CreatedAt = DateTime.UtcNow },
-                    new Group { GroupName = "Demo Group 2", CreatedAt = DateTime.UtcNow }
-                );
-                db.SaveChanges();
-                logger.LogInformation("Seed data created: 2 demo groups.");
-            }
+            logger.LogInformation("Database migration completed successfully.");
             break;
         }
         catch (Exception ex) when (retries > 0)
         {
-            logger.LogWarning("Migration failed ({Retries} retries left): {Message}", retries, ex.Message);
-            await Task.Delay(3000);
+            logger.LogWarning("Migration failed ({Left} retries left): {Msg}", retries, ex.Message);
+            await Task.Delay(3_000);
         }
         catch (Exception ex)
         {
             if (app.Environment.IsDevelopment())
             {
-                logger.LogWarning("Migration failed in dev mode, resetting database: {Message}", ex.Message);
+                logger.LogWarning("Migration failed — resetting DB in dev: {Msg}", ex.Message);
                 db.Database.EnsureDeleted();
                 db.Database.Migrate();
-                logger.LogInformation("Database reset and migrated successfully.");
             }
             else
             {
-                logger.LogError(ex, "Migration failed.");
+                logger.LogError(ex, "Database migration failed.");
                 throw;
             }
         }
     }
 }
 
+// ── Middleware pipeline ──────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowAngular");
+app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.Use((context, next) =>
-{
-    Console.WriteLine($"Request: {context.Request.Method} {context.Request.Path}");
-    return next();
-});
-
 app.MapControllers();
-app.MapHub<ChatHub>("/hubs/chat");
-app.MapHub<PrintHub>("/hubs/print");
-app.MapHub<TransactionHub>("/hubs/transaction");
-app.MapHub<DocumentHub>("/hubs/document");
-
+app.MapHub<AuraHub>("/hubs/aura");
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 app.Run();

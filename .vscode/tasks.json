@@ -28,7 +28,7 @@
       ],
       "group": "build",
       "problemMatcher": "$msCompile",
-      "presentation": { "reveal": "silent", "panel": "shared" }
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
     },
     {
       "label": "build: blazor",
@@ -41,7 +41,14 @@
       ],
       "group": "build",
       "problemMatcher": "$msCompile",
-      "presentation": { "reveal": "silent", "panel": "shared" }
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      "label": "build: backend + blazor",
+      "dependsOn": ["build: backend", "build: blazor"],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": "$msCompile"
     },
 
     // ─── Run (hot-reload) ─────────────────────────────────────────────────
@@ -66,7 +73,7 @@
     {
       "label": "run: frontend",
       "type": "shell",
-      "command": "cd /workspace/frontend && npm start",
+      "command": "cd /workspace/frontend && npm start -- --port 4300",
       "group": "build",
       "presentation": { "reveal": "always", "panel": "new", "group": "devservers" },
       "isBackground": true,

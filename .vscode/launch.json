@@ -52,40 +52,44 @@
       "justMyCode": true
     },
 
-    // ─── Frontend ─────────────────────────────────────────────────────────
+    // ─── Compound use (no individual build) ───────────────────────────────
     {
-      "name": "🟠 Frontend: Chrome",
-      "type": "chrome",
+      "name": "🔵 Backend: Launch (compound)",
+      "type": "coreclr",
       "request": "launch",
-      "url": "http://localhost:4200",
-      "webRoot": "${workspaceFolder}/frontend/src",
-      "sourceMapPathOverrides": {
-        "webpack:///./src/*": "${webRoot}/*",
-        "ng:///*": "${webRoot}/*"
-      }
+      "program": "/workspace/backend/POC.AURA.Api/bin/Debug/net8.0/POC.AURA.Api.dll",
+      "args": [],
+      "cwd": "/workspace/backend/POC.AURA.Api",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://0.0.0.0:5000",
+        "ConnectionStrings__DefaultConnection": "Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;"
+      },
+      "justMyCode": true
     },
     {
-      "name": "🟠 Frontend: Edge",
-      "type": "msedge",
+      "name": "🟣 Blazor: Launch (compound)",
+      "type": "coreclr",
       "request": "launch",
-      "url": "http://localhost:4200",
-      "webRoot": "${workspaceFolder}/frontend/src",
-      "sourceMapPathOverrides": {
-        "webpack:///./src/*": "${webRoot}/*",
-        "ng:///*": "${webRoot}/*"
-      }
-    }
+      "program": "/workspace/blazor/POC.AURA.SmartHub/bin/Debug/net8.0/POC.AURA.SmartHub.dll",
+      "args": [],
+      "cwd": "/workspace/blazor/POC.AURA.SmartHub",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://0.0.0.0:5001",
+        "Backend__Url": "http://localhost:5000"
+      },
+      "justMyCode": true
+    },
   ],
 
   "compounds": [
     {
-      "name": "🚀 Full Stack Debug (BE + FE)",
-      "configurations": ["🔵 Backend: Launch & Debug", "🟠 Frontend: Chrome"],
-      "stopAll": true
-    },
-    {
-      "name": "🚀 Full Stack Debug (BE + Blazor + FE)",
-      "configurations": ["🔵 Backend: Launch & Debug", "🟣 Blazor: Launch & Debug", "🟠 Frontend: Chrome"],
+      "name": "🚀 Debug: BE + Blazor",
+      "configurations": ["🔵 Backend: Launch (compound)", "🟣 Blazor: Launch (compound)"],
+      "preLaunchTask": "build: backend + blazor",
       "stopAll": true
     }
   ]

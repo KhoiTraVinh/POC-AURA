@@ -34,11 +34,11 @@
     }
   },
 
-  "forwardPorts": [5000, 5001, 4200, 8978, 1433],
+  "forwardPorts": [5000, 5001, 4300, 8978, 1433],
   "portsAttributes": {
     "5000": { "label": "Backend API / Swagger", "onAutoForward": "notify" },
     "5001": { "label": "Blazor SmartHub", "onAutoForward": "notify" },
-    "4200": { "label": "Angular Dev Server", "onAutoForward": "openBrowser" },
+    "4300": { "label": "Angular Dev Server", "onAutoForward": "openBrowser" },
     "8978": { "label": "CloudBeaver DB Manager", "onAutoForward": "notify" },
     "1433": { "label": "SQL Server", "onAutoForward": "silent" }
   },

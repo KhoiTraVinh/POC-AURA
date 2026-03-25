@@ -1,193 +1,165 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
 using POC.AURA.SmartHub.Models;
 
 namespace POC.AURA.SmartHub.Services;
 
-public class PrintHubService : IAsyncDisposable
+/// <summary>
+/// Manages print job processing for all configured tenants.
+/// <para>
+/// Extends <see cref="TenantHubServiceBase"/> and connects to AuraHub as <c>smarthub</c>.
+/// On receiving <c>ExecutePrintJob</c>, automatically simulates printing (1–3 s delay)
+/// then reports the result to <c>POST /api/print/complete</c>.
+/// </para>
+/// </summary>
+public sealed class PrintHubService : TenantHubServiceBase
 {
-    private readonly IConfiguration _config;
-    private readonly ILogger<PrintHubService> _logger;
-    private HubConnection? _hub;
-    private string _accessToken = string.Empty;
-    private string _backendUrl = string.Empty;
+    protected override string ClientType => "smarthub";
 
-    public string Status { get; private set; } = "disconnected";
-    public string TenantId { get; private set; } = string.Empty;
-    public string UserName { get; private set; } = string.Empty;
-
+    /// <summary>Jobs currently in-flight (added when received, removed after reporting).</summary>
     public List<PrintJob> PendingJobs { get; } = [];
-    public List<(PrintJobResult Result, DateTime Time)> CompletedJobs { get; } = [];
-    public List<(string Level, string Message, DateTime Time)> Logs { get; } = [];
 
-    public event Action? StateChanged;
+    /// <summary>Completed job results, capped at the 50 most recent.</summary>
+    public List<(PrintJobResult Result, DateTime Time)> CompletedJobs { get; } = [];
 
     public PrintHubService(IConfiguration config, ILogger<PrintHubService> logger)
+        : base(config, logger) { }
+
+    // ── TenantHubServiceBase ──────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    protected override void RegisterHandlers(HubConnection hub, string tenantId, string token)
     {
-        _config = config;
-        _logger = logger;
+        hub.On<PrintJob>("ExecutePrintJob", job =>
+        {
+            lock (SyncLock) PendingJobs.Add(job);
+            AddLog("info", $"[{tenantId}] [IN] #{job.Id} \"{job.DocumentName}\" ×{job.Copies}");
+            _ = AutoProcessAsync(job);
+        });
+
+        hub.On<PrintJob>("PrintJobQueued", job =>
+            AddLog("info", $"[{tenantId}] [Queued] #{job.Id} confirmed"));
     }
 
-    public async Task ConnectAsync(string tenantId, string userName)
+    /// <inheritdoc/>
+    protected override async Task FetchPendingAsync(string tenantId, string token)
     {
-        if (_hub is not null)
-            await DisposeAsync();
-
-        TenantId = tenantId;
-        UserName = userName;
-        SetStatus("connecting");
-
-        _backendUrl = _config["Backend:Url"] ?? "http://backend:8080";
+        var url = $"{BackendUrl}/api/print/pending";
+        AddLog("info", $"[{tenantId}] Fetching pending jobs from {url}...");
 
         try
         {
-            _accessToken = await GetTokenAsync(_backendUrl, tenantId, userName);
+            using var http = CreateHttpClient(token);
+            var resp = await http.GetAsync(url);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                AddLog("error", $"[{tenantId}] GET pending failed {(int)resp.StatusCode}: {body}");
+                return;
+            }
+
+            var jobs = await resp.Content.ReadFromJsonAsync<List<PrintJob>>(
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy          = System.Text.Json.JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive   = true
+                });
+
+            AddLog("info", $"[{tenantId}] Pending jobs in DB: {jobs?.Count ?? 0}");
+            if (jobs is null || jobs.Count == 0) return;
+
+            var newJobs = new List<PrintJob>();
+            lock (SyncLock)
+            {
+                foreach (var job in jobs.Where(j => !PendingJobs.Any(p => p.Id == j.Id)))
+                {
+                    PendingJobs.Add(job);
+                    newJobs.Add(job);
+                }
+            }
+
+            if (newJobs.Count == 0) return;
+
+            AddLog("info", $"[{tenantId}] Recovered {newJobs.Count} job(s) — auto-processing...");
+            foreach (var job in newJobs)
+                _ = AutoProcessAsync(job);
         }
         catch (Exception ex)
         {
-            SetStatus("disconnected");
-            AddLog("error", $"Auth failed: {ex.Message}");
-            _logger.LogError(ex, "Failed to get smarthub token for {TenantId}", tenantId);
-            return;
-        }
-
-        _hub = new HubConnectionBuilder()
-            .WithUrl($"{_backendUrl}/hubs/print", options =>
-            {
-                options.AccessTokenProvider = () => Task.FromResult<string?>(_accessToken);
-            })
-            .WithAutomaticReconnect()
-            .AddJsonProtocol(options =>
-            {
-                // Must match server's camelCase config
-                options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-                options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-            })
-            .Build();
-
-        _hub.Reconnecting += _ => { SetStatus("reconnecting"); return Task.CompletedTask; };
-        _hub.Reconnected += _ => { SetStatus("connected"); return Task.CompletedTask; };
-        _hub.Closed += _ => { SetStatus("disconnected"); return Task.CompletedTask; };
-
-        _hub.On<PrintJob>("ExecutePrintJob", job =>
-        {
-            PendingJobs.Add(job);
-            AddLog("info", $"[IN] Job #{job.Id} — \"{job.DocumentName}\" x{job.Copies}");
-            StateChanged?.Invoke();
-        });
-
-        _hub.On<PrintJob>("PrintJobQueued", job =>
-        {
-            AddLog("info", $"[Queued] Job #{job.Id} confirmed by server");
-            StateChanged?.Invoke();
-        });
-
-        _hub.On<object>("ClientConnected", _ =>
-        {
-            AddLog("success", "[Hub] Client connected");
-            StateChanged?.Invoke();
-        });
-
-        try
-        {
-            await _hub.StartAsync();
-            SetStatus("connected");
-            AddLog("success", $"Connected as SmartHub — tenant: {tenantId}, user: {userName}");
-        }
-        catch (Exception ex)
-        {
-            SetStatus("disconnected");
-            AddLog("error", $"Connection failed: {ex.Message}");
-            _logger.LogError(ex, "Failed to connect to PrintHub");
+            AddLog("error", $"[{tenantId}] FetchPending exception: {ex.GetType().Name}: {ex.Message}");
+            Logger.LogError(ex, "FetchPendingAsync failed for {TenantId}", tenantId);
         }
     }
 
-    public async Task DisconnectAsync()
-    {
-        if (_hub is not null)
-        {
-            await _hub.StopAsync();
-            await _hub.DisposeAsync();
-            _hub = null;
-        }
-        SetStatus("disconnected");
-        AddLog("warn", "Disconnected");
-    }
+    // ── Job processing ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Reports a job as completed or failed to the backend HTTP API.
+    /// Updates <see cref="PendingJobs"/> and <see cref="CompletedJobs"/>.
+    /// </summary>
     public async Task ReportCompleteAsync(PrintJob job, bool success)
     {
         var message = success
-            ? $"Printed {job.Copies}x \"{job.DocumentName}\""
+            ? $"Printed {job.Copies}× \"{job.DocumentName}\""
             : "Print failed: Paper jam";
+
+        if (!TryGetConnection(job.TenantId, out var conn))
+        {
+            AddLog("error", $"No connection for tenant {job.TenantId}");
+            return;
+        }
 
         try
         {
-            // Report completion via HTTP POST /api/print/complete (requires Bearer token)
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
-            var body = new { JobId = job.Id, Success = success, Message = message };
-            var resp = await http.PostAsJsonAsync($"{_backendUrl}/api/print/complete", body);
+            using var http = CreateHttpClient(conn.Token);
+            var resp = await http.PostAsJsonAsync(
+                $"{BackendUrl}/api/print/complete",
+                new { JobId = job.Id, Success = success, Message = message });
             resp.EnsureSuccessStatusCode();
 
             var result = new PrintJobResult(
-                JobId: job.Id,
-                TenantId: job.TenantId,
-                RequestorConnectionId: job.RequestorConnectionId,
-                Success: success,
-                Message: message,
-                CompletedAt: DateTime.UtcNow.ToString("O")
-            );
+                job.Id, job.TenantId, job.RequestorConnectionId,
+                success, message, DateTime.UtcNow.ToString("O"));
 
-            PendingJobs.Remove(job);
-            CompletedJobs.Add((result, DateTime.Now));
-            if (CompletedJobs.Count > 50) CompletedJobs.RemoveAt(0);
+            lock (SyncLock)
+            {
+                PendingJobs.Remove(job);
+                CompletedJobs.Add((result, DateTime.Now));
+                if (CompletedJobs.Count > 50) CompletedJobs.RemoveAt(0);
+            }
+
             AddLog(success ? "success" : "error",
-                $"[OUT] #{job.Id} {(success ? "Done" : "Failed")} → reported to server");
+                $"[{job.TenantId}] [OUT] #{job.Id} {(success ? "Done ✓" : "Failed ✗")} → reported");
         }
         catch (Exception ex)
         {
-            AddLog("error", $"Report failed: {ex.Message}");
-            _logger.LogError(ex, "Failed to report job complete");
+            AddLog("error", $"Report failed for #{job.Id}: {ex.Message}");
+            Logger.LogError(ex, "Failed to report job complete for {Id}", job.Id);
         }
-
-        StateChanged?.Invoke();
     }
 
-    // ── Private helpers ────────────────────────────────────────────────────
+    // ── Private ───────────────────────────────────────────────────────────
 
-    private async Task<string> GetTokenAsync(string backendUrl, string tenantId, string userName)
+    /// <summary>Simulates print processing then auto-reports completion.</summary>
+    private async Task AutoProcessAsync(PrintJob job)
     {
-        using var http = new HttpClient();
-        var body = new { TenantId = tenantId, ClientType = "smarthub", UserName = userName };
-        var resp = await http.PostAsJsonAsync($"{backendUrl}/api/auth/token", body);
-        resp.EnsureSuccessStatusCode();
-
-        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        return json.GetProperty("accessToken").GetString()
-               ?? throw new InvalidOperationException("No accessToken in response");
-    }
-
-    private void SetStatus(string status)
-    {
-        Status = status;
-        StateChanged?.Invoke();
-    }
-
-    private void AddLog(string level, string message)
-    {
-        Logs.Add((level, message, DateTime.Now));
-        if (Logs.Count > 100) Logs.RemoveAt(0);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_hub is not null)
+        try
         {
-            await _hub.DisposeAsync();
-            _hub = null;
+            await Task.Delay(Random.Shared.Next(1_000, 3_000));
+            await ReportCompleteAsync(job, success: true);
         }
+        catch (Exception ex)
+        {
+            AddLog("error", $"[{job.TenantId}] Auto-process failed #{job.Id}: {ex.Message}");
+        }
+    }
+
+    private HttpClient CreateHttpClient(string token)
+    {
+        var http = new HttpClient();
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return http;
     }
 }

@@ -1,44 +1,44 @@
 namespace POC.AURA.Api.Models;
 
+/// <summary>Inbound request from an Angular UI client to submit a bank transaction.</summary>
 public record TransactionRequest(string Description, decimal Amount, string Currency = "VND");
 
-public record TransactionWorkItem(string Id, TransactionRequest Request, string ConnectionId, DateTime SubmittedAt);
-
+/// <summary>
+/// Snapshot of a bank transaction, used both while processing and in the history list.
+/// </summary>
 public record TransactionStatus(
-    string Id,
-    string State,       // processing | completed | failed | rejected
-    string Description,
-    string? Result,
-    DateTime SubmittedAt,
+    string    Id,
+    string    State,        // processing | completed | failed | rejected
+    string    Description,
+    string?   Result,
+    DateTime  SubmittedAt,
     DateTime? FinishedAt
 );
 
 /// <summary>
-/// Immediate response to TrySubmit call.
-/// Status = "accepted": transaction is being processed, follow via SignalR.
-/// Status = "rejected": bank is busy, client should retry.
+/// Immediate response to <see cref="ITransactionQueueService.TrySubmitAsync"/>.
+/// <list type="bullet">
+///   <item><c>accepted</c> — lock acquired; follow progress via <c>TransactionStatusChanged</c> SignalR events.</item>
+///   <item><c>rejected</c> — bank is busy; caller should retry.</item>
+/// </list>
 /// </summary>
 public record TransactionSubmitResult(
-    string? TransactionId,
-    string Status,          // "accepted" | "rejected"
-    string Message,
-    TransactionStatus? CurrentlyProcessing  // who's blocking when rejected
-);
-
-public record TransactionHistoryStatus(
-    bool IsBankBusy,
-    TransactionStatus? CurrentTransaction,
-    IReadOnlyList<TransactionStatus> History  // last 20 completed/failed
+    string?           TransactionId,
+    string            Status,                 // "accepted" | "rejected"
+    string            Message,
+    TransactionStatus? CurrentlyProcessing    // populated when rejected so UI can show who is blocking
 );
 
 /// <summary>
-/// Report sent by the Blazor bank processor back to the hub upon completion.
+/// Full bank state snapshot pushed to all UI clients via <c>BankStatus</c>.
 /// </summary>
-public record TransactionResult(
-    string TransactionId,
-    bool Success,
-    string Message
+public record TransactionHistoryStatus(
+    bool                          IsBankBusy,
+    TransactionStatus?            CurrentTransaction,
+    IReadOnlyList<TransactionStatus> History
 );
 
-/// <summary>Request body for SmartHub to report transaction completion via HTTP API.</summary>
+/// <summary>
+/// Request body POSTed by the SmartHub to <c>/api/transaction/complete</c>.
+/// </summary>
 public record CompleteTransactionRequest(string TransactionId, bool Success, string Message);

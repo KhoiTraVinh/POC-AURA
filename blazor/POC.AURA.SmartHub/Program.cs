@@ -5,9 +5,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-// Scoped: one instance per Blazor circuit (browser tab)
-builder.Services.AddScoped<PrintHubService>();
-builder.Services.AddScoped<BankHubService>();
+// Singleton: shared across all browser tabs, auto-connects to all tenants on startup
+builder.Services.AddSingleton<PrintHubService>();
+builder.Services.AddSingleton<BankHubService>();
+builder.Services.AddHostedService<SmartHubStartupService>();
 
 var app = builder.Build();
 

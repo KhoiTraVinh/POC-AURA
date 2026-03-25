@@ -1,70 +1,86 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using POC.AURA.Api.Data;
+using POC.AURA.Api.Constants;
+using POC.AURA.Api.Extensions;
 using POC.AURA.Api.Models;
+using POC.AURA.Api.Repositories;
 using POC.AURA.Api.Services;
 
 namespace POC.AURA.Api.Controllers;
 
+/// <summary>
+/// HTTP API for the Blazor SmartHub bank processor.
+/// <para>
+/// All endpoints require <c>client_type = "bank"</c> in the JWT.
+/// </para>
+/// <list type="bullet">
+///   <item><c>GET  /api/transaction/pending</c>  — Fetch unprocessed transactions on reconnect.</item>
+///   <item><c>POST /api/transaction/complete</c> — Report result; releases the global bank lock.</item>
+/// </list>
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
 public class TransactionController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IJobRepository _jobs;
     private readonly ITransactionQueueService _bank;
     private readonly ILogger<TransactionController> _logger;
 
-    private string TenantId => User.FindFirst("tenant_id")!.Value;
-    private string ClientType => User.FindFirst("client_type")!.Value;
+    private string TenantId   => User.GetTenantId();
+    private string ClientType  => User.GetClientType();
 
-    public TransactionController(AppDbContext db, ITransactionQueueService bank, ILogger<TransactionController> logger)
+    public TransactionController(
+        IJobRepository jobs,
+        ITransactionQueueService bank,
+        ILogger<TransactionController> logger)
     {
-        _db = db;
-        _bank = bank;
+        _jobs   = jobs;
+        _bank   = bank;
         _logger = logger;
     }
 
     /// <summary>
-    /// GET /api/transaction/pending
-    /// Called by SmartHub on startup/reconnect to retrieve pending transactions.
+    /// Returns all <c>pending</c> bank transactions for the caller's tenant.
+    /// Called by SmartHub on startup/reconnect to recover unprocessed work.
     /// </summary>
     [HttpGet("pending")]
     public async Task<IActionResult> GetPending()
     {
-        if (ClientType != "bank")
-            return Forbid();
+        if (ClientType != ClientTypes.Bank) return Forbid();
 
-        var txns = await _db.BankTransactions
-            .Where(t => t.TenantId == TenantId && t.Status == "pending")
-            .OrderBy(t => t.CreatedAt)
-            .Select(t => new
+        var messages = await _jobs.GetPendingAsync(TenantId, MessageTypes.BankTransaction);
+
+        var txns = messages.Select(m =>
+        {
+            var p = JsonSerializer.Deserialize<JsonElement>(m.Payload ?? "{}");
+            return new
             {
-                TransactionId = t.Id,
-                t.Description,
-                t.Amount,
-                t.Currency,
-                SubmittedAt = t.CreatedAt
-            })
-            .ToListAsync();
+                TransactionId = m.Ref,
+                Description   = p.TryGetProperty("description", out var d) ? d.GetString() : "",
+                Amount        = p.TryGetProperty("amount",      out var a) ? a.GetDecimal() : 0m,
+                Currency      = p.TryGetProperty("currency",    out var c) ? c.GetString()  : "VND",
+                SubmittedAt   = m.CreatedAt
+            };
+        });
 
         return Ok(txns);
     }
 
     /// <summary>
-    /// POST /api/transaction/complete
-    /// Called by SmartHub to report transaction completion.
+    /// Marks a transaction as <c>completed</c> or <c>failed</c>, releases the global
+    /// bank lock, and broadcasts the updated status to all UI clients.
     /// </summary>
     [HttpPost("complete")]
     public async Task<IActionResult> Complete([FromBody] CompleteTransactionRequest req)
     {
-        if (ClientType != "bank")
-            return Forbid();
+        if (ClientType != ClientTypes.Bank) return Forbid();
 
         await _bank.CompleteTransactionAsync(TenantId, req);
 
-        _logger.LogInformation("[TxnAPI] TXN-{Id} {Status} for {TenantId}", req.TransactionId, req.Success ? "completed" : "failed", TenantId);
+        _logger.LogInformation("[TxnAPI] TXN-{Id} {Status} for {TenantId}",
+            req.TransactionId, req.Success ? "completed" : "failed", TenantId);
 
         return Ok(new { message = "Transaction completion recorded" });
     }

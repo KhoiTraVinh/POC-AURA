@@ -1,0 +1,39 @@
+{
+  "Version": 1,
+  "Hash": "GauHJKMS9QTnQv1Ks88DEyPCkSevAkXiLdxwN23Aytk=",
+  "Source": "POC.AURA.SmartHub",
+  "BasePath": "_content/POC.AURA.SmartHub",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [
+    {
+      "Name": "POC.AURA.SmartHub/wwwroot",
+      "Source": "POC.AURA.SmartHub",
+      "ContentRoot": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/",
+      "BasePath": "_content/POC.AURA.SmartHub",
+      "Pattern": "**"
+    }
+  ],
+  "Assets": [
+    {
+      "Identity": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/app.css",
+      "SourceId": "POC.AURA.SmartHub",
+      "SourceType": "Discovered",
+      "ContentRoot": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/",
+      "BasePath": "_content/POC.AURA.SmartHub",
+      "RelativePath": "app.css",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot/app.css"
+    }
+  ]
+}
