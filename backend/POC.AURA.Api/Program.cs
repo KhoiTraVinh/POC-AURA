@@ -3,16 +3,14 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using POC.AURA.Api.Auth;
 using POC.AURA.Api.Data;
-using POC.AURA.Api.Hubs;
-using POC.AURA.Api.Repositories;
-using POC.AURA.Api.Services;
+using POC.AURA.Api.Data.Repositories;
+using POC.AURA.Api.Server.Hubs;
+using POC.AURA.Api.Service;
+using POC.AURA.Api.Service.Auth;
 
 // Prevent ASP.NET Core from remapping standard JWT claim names (sub, name, ...)
 // to legacy .NET ClaimTypes (NameIdentifier, Name, ...).
-// Without this, Context.User.FindFirst("sub") returns null in hubs/controllers
-// because the bearer middleware silently maps "sub" → ClaimTypes.NameIdentifier.
 JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,10 +34,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // ── Application services ────────────────────────────────────────────────────
-// Scoped: one instance per hub/controller invocation
 builder.Services.AddScoped<IJobRepository, JobRepository>();
 
-// Singletons: live for the entire application lifetime
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<IConnectionTracker, ConnectionTracker>();
 builder.Services.AddSingleton<ITransactionQueueService, TransactionQueueService>();
@@ -58,8 +54,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience         = false,
             ClockSkew                = TimeSpan.Zero
         };
-        // SignalR sends the token via query string because WebSocket connections
-        // cannot carry custom headers.
+        // SignalR sends the token via query string (WebSocket cannot carry custom headers)
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -79,15 +74,12 @@ builder.Services.AddAuthorization();
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors  = builder.Environment.IsDevelopment();
-    // Set generous timeouts — the Blazor SmartHub client sets matching values.
-    // Default 30 s server timeout caused spurious disconnects under low traffic.
     options.KeepAliveInterval     = TimeSpan.FromDays(365);
     options.ClientTimeoutInterval = TimeSpan.FromDays(365);
 })
-// Serialise hub payloads as camelCase to match TypeScript interfaces.
 .AddJsonProtocol(options =>
 {
-    options.PayloadSerializerOptions.PropertyNamingPolicy      = JsonNamingPolicy.CamelCase;
+    options.PayloadSerializerOptions.PropertyNamingPolicy       = JsonNamingPolicy.CamelCase;
     options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
 });
 

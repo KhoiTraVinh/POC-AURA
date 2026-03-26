@@ -1,0 +1,30 @@
+@page "/access-denied"
+@rendermode InteractiveServer
+@inject NavigationManager Nav
+
+<div class="page page-centered">
+  <div class="card error-card">
+    <div class="error-icon">🔒</div>
+    <h2>Access Denied</h2>
+    @if (_message is not null)
+    {
+      <p class="error-msg">@_message</p>
+    }
+    else
+    {
+      <p class="error-msg">You don't have permission to access this resource on the Aura server.</p>
+    }
+    <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/")'>Back to Dashboard</button>
+  </div>
+</div>
+
+@code {
+  [SupplyParameterFromQuery] public string? Message { get; set; }
+
+  private string? _message;
+
+  protected override void OnParametersSet()
+  {
+    _message = Message is not null ? Uri.UnescapeDataString(Message) : null;
+  }
+}

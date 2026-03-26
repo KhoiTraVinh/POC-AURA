@@ -263,3 +263,62 @@ code {
 
 .processing-pulse { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ── Connection Manager (Index) ─────────────────────────────────────────── */
+.toolbar { margin-bottom: 16px; }
+.connection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.conn-card { background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; }
+.conn-card-error { border-color: #f5c6cb; background: #fff8f8; }
+.conn-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+.conn-title { display: flex; flex-direction: column; gap: 2px; }
+.conn-name { font-size: 15px; font-weight: 700; color: #1a1a2e; }
+.conn-company { font-size: 11px; color: #888; }
+.conn-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.dot-green  { background: #28a745; }
+.dot-yellow { background: #ffc107; animation: pulse 1.5s infinite; }
+.dot-red    { background: #dc3545; }
+.dot-gray   { background: #adb5bd; }
+.conn-meta { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.meta-item { font-size: 12px; color: #555; }
+.meta-msg  { font-style: italic; }
+.meta-error { color: #dc3545; }
+.conn-hubs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.hub-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+.hub-connected    { background: #d4edda; color: #155724; }
+.hub-connecting   { background: #fff3cd; color: #856404; }
+.hub-error        { background: #f8d7da; color: #721c24; }
+.hub-disconnected { background: #e2e3e5; color: #383d41; }
+.conn-token-info { font-size: 11px; color: #888; margin-bottom: 10px; }
+.conn-actions { display: flex; gap: 8px; }
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.empty-state { text-align: center; padding: 48px 24px; }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty-title { font-size: 18px; font-weight: 600; color: #1a1a2e; margin-bottom: 6px; }
+.empty-desc { font-size: 13px; color: #888; }
+
+/* ── Server Entry Form ───────────────────────────────────────────────────── */
+.form-card { max-width: 540px; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: #333; }
+.input { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+.input:focus { border-color: #007bff; outline: none; }
+.input-hint { font-size: 11px; color: #888; margin-top: 3px; }
+.form-actions { display: flex; gap: 10px; margin-top: 20px; }
+.alert { padding: 10px 14px; border-radius: 4px; margin-top: 12px; font-size: 13px; }
+.alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+.auth-note { margin-top: 24px; padding: 14px; background: #f0f7ff; border-radius: 6px; font-size: 12px; }
+.auth-note strong { display: block; margin-bottom: 6px; color: #0056b3; }
+.auth-note ol { padding-left: 16px; }
+.auth-note li { margin-bottom: 4px; color: #555; line-height: 1.5; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Buttons extra ───────────────────────────────────────────────────────── */
+.btn-outline { background: white; border: 1px solid #ccc; color: #333; }
+.btn-outline:hover { background: #f8f9fa; }
+.page-centered { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.error-card { text-align: center; max-width: 400px; padding: 32px; }
+.error-icon { font-size: 40px; margin-bottom: 12px; }
+.error-card h2 { margin-bottom: 12px; color: #dc3545; }
+.error-msg { color: #555; margin-bottom: 20px; font-size: 13px; }

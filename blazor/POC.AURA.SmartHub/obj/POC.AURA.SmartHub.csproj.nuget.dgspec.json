@@ -1,25 +1,32 @@
 {
   "format": 1,
   "restore": {
-    "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj": {}
+    "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\POC.AURA.SmartHub.csproj": {}
   },
   "projects": {
-    "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj": {
+    "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\POC.AURA.SmartHub.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj",
+        "projectUniqueName": "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\POC.AURA.SmartHub.csproj",
         "projectName": "POC.AURA.SmartHub",
-        "projectPath": "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj",
-        "packagesPath": "/root/.nuget/packages/",
-        "outputPath": "/workspace/blazor/POC.AURA.SmartHub/obj/",
+        "projectPath": "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\POC.AURA.SmartHub.csproj",
+        "packagesPath": "C:\\Users\\khoi.duong\\.nuget\\packages\\",
+        "outputPath": "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\obj\\",
         "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
         "configFilePaths": [
-          "/root/.nuget/NuGet/NuGet.Config"
+          "C:\\Users\\khoi.duong\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -37,13 +44,23 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "10.0.200"
       },
       "frameworks": {
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
             "Microsoft.AspNetCore.SignalR.Client": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "Microsoft.EntityFrameworkCore.Design": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "Microsoft.EntityFrameworkCore.Sqlite": {
               "target": "Package",
               "version": "[8.0.0, )"
             }
@@ -67,7 +84,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/8.0.419/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.201/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

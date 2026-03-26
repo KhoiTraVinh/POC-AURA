@@ -7,7 +7,7 @@ RUN dotnet restore POC.AURA.SmartHub/POC.AURA.SmartHub.csproj
 
 COPY POC.AURA.SmartHub/ POC.AURA.SmartHub/
 RUN dotnet publish POC.AURA.SmartHub/POC.AURA.SmartHub.csproj \
-    -c Release -o /app/publish --no-restore
+    -c Release -o /app/publish
 
 # ── Runtime stage ───────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
