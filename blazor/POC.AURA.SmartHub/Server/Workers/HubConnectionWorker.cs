@@ -35,6 +35,7 @@ public class HubConnectionWorker : BackgroundService
 
     // Per-connection state
     private readonly Dictionary<int, HubConnection> _connections = new();
+    private readonly HashSet<int> _intentionallyDisconnected = new(); // prevents Closed handler from reconnecting after an explicit DisconnectServer call
     private readonly SemaphoreSlim _printSemaphore = new(3, 3); // max 3 concurrent print jobs
     private readonly object _lock = new();
 
@@ -100,6 +101,7 @@ public class HubConnectionWorker : BackgroundService
             _connections.TryGetValue(connectionId, out hub);
             _connections.Remove(connectionId);
             ConnectionStatuses.Remove(connectionId);
+            _intentionallyDisconnected.Add(connectionId); // signal Closed handler to skip auto-reconnect
         }
         _ = hub?.DisposeAsync();
         StateChanged?.Invoke();
@@ -136,6 +138,12 @@ public class HubConnectionWorker : BackgroundService
         hub.Reconnected  += async _ => { SetStatus(conn, "connected"); await FetchPendingAsync(conn, token); };
         hub.Closed       += async _ =>
         {
+            // If DisconnectServer was called intentionally (e.g. token refresh reconnect),
+            // skip auto-reconnect — the caller handles reconnection itself.
+            lock (_lock)
+            {
+                if (_intentionallyDisconnected.Remove(conn.Id)) return;
+            }
             SetStatus(conn, "disconnected");
             await Task.Delay(5_000, ct);
             if (!ct.IsCancellationRequested) await ConnectAsync(conn, ct);

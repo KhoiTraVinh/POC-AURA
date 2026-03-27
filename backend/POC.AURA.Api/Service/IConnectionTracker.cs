@@ -28,4 +28,10 @@ public interface IConnectionTracker
     /// Returns an empty list when the user has no active connections (offline).
     /// </summary>
     IReadOnlyList<string> GetConnectionIds(string userId);
+
+    /// <summary>
+    /// Returns a snapshot of all active connections keyed by userId.
+    /// Used by the debug /api/connections endpoint.
+    /// </summary>
+    IReadOnlyDictionary<string, IReadOnlyList<string>> GetAll();
 }

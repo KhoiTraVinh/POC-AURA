@@ -83,7 +83,15 @@ export class DocumentService {
       .withServerTimeout(24 * 60 * 60 * 1_000)
       .build();
 
-    this.hub.onreconnecting(() => this._connectionStatus$.next('reconnecting'));
+    this.hub.onreconnecting(() => {
+      // Stop all heartbeats immediately so the server does not receive
+      // HeartbeatFieldLock calls via the new connection after the old
+      // connection's OnDisconnectedAsync has already released the lock.
+      // Without this, Heartbeat() on the server would re-create a "zombie"
+      // lock entry with an empty ConnectionId that can never be released.
+      this.stopAllHeartbeats();
+      this._connectionStatus$.next('reconnecting');
+    });
     this.hub.onreconnected(() => this._connectionStatus$.next('connected'));
     this.hub.onclose(()      => this._connectionStatus$.next('disconnected'));
 

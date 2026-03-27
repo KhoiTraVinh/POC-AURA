@@ -75,11 +75,14 @@ public class DocumentLockService : IDocumentLockService, IHostedService, IDispos
     public void Heartbeat(string docId, string fieldId, string userId)
     {
         var key = $"{docId}:{fieldId}";
-        _locks.AddOrUpdate(key,
-            _ => new FieldLockEntry(docId, fieldId, userId, "", "", DateTime.UtcNow.AddSeconds(LockTtlSeconds)),
-            (_, existing) => existing.UserId == userId
-                ? existing with { ExpiresAt = DateTime.UtcNow.AddSeconds(LockTtlSeconds) }
-                : existing);
+        // Only extend an existing lock — never create a new one.
+        // Creating a lock here would produce a "zombie" entry (empty ConnectionId)
+        // that can never be released by ReleaseAllByConnection, e.g. when the
+        // client heartbeats via a new SignalR connection after an auto-reconnect
+        // while the old connection's OnDisconnectedAsync already released the lock.
+        if (!_locks.TryGetValue(key, out var existing) || existing.UserId != userId) return;
+        var updated = existing with { ExpiresAt = DateTime.UtcNow.AddSeconds(LockTtlSeconds) };
+        _locks.TryUpdate(key, updated, existing);
     }
 
     public FieldLockInfo? GetLock(string docId, string fieldId)

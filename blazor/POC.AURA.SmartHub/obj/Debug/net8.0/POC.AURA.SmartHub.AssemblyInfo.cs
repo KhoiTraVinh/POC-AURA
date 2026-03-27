@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("POC.AURA.SmartHub")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3d17438d7e65fa9f9168a1e13570b90f41e0436f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fcda71a16fd004a1d3c43b615614d4814335f320")]
 [assembly: System.Reflection.AssemblyProductAttribute("POC.AURA.SmartHub")]
 [assembly: System.Reflection.AssemblyTitleAttribute("POC.AURA.SmartHub")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

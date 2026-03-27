@@ -50,12 +50,29 @@ services:
       - "4300:4300"   # Angular — accessible on LAN via 192.168.50.113:4300
       - "5000:5000"   # Backend API
       - "5001:5001"   # Blazor SmartHub
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     networks:
       - poc-dev-network
     depends_on:
       sqlserver:
         condition: service_healthy
     command: sleep infinity
+
+  jmeter:
+    image: justb4/jmeter:5.6.3
+    container_name: poc-aura-dev-jmeter
+    volumes:
+      - ./tests/jmeter:/tests
+    environment:
+      - BASE_HOST=workspace
+      - BASE_PORT=5000
+    networks:
+      - poc-dev-network
+    profiles:
+      - testing
+    entrypoint: ["sleep", "infinity"]
 
 volumes:
   sqlserver-dev-data:

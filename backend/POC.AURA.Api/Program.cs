@@ -74,8 +74,8 @@ builder.Services.AddAuthorization();
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors  = builder.Environment.IsDevelopment();
-    options.KeepAliveInterval     = TimeSpan.FromDays(365);
-    options.ClientTimeoutInterval = TimeSpan.FromDays(365);
+    options.KeepAliveInterval     = TimeSpan.FromSeconds(60);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(120);
 })
 .AddJsonProtocol(options =>
 {

@@ -50,4 +50,10 @@ public sealed class ConnectionTracker : IConnectionTracker
         _userToConnections.TryGetValue(userId, out var connections)
             ? connections.Keys.ToList()
             : [];
+
+    /// <inheritdoc/>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> GetAll() =>
+        _userToConnections.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<string>)kv.Value.Keys.ToList());
 }
