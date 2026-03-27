@@ -59,6 +59,14 @@ public class AuraHub : Hub
 
         await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.For(ClientType, TenantId));
 
+        // SmartHub handles both print AND bank jobs with a single connection.
+        // Its token has client_type="smarthub", so it lands in smarthub-{tenantId}.
+        // We also add it to bank-{tenantId} so it receives ExecuteTransaction events.
+        if (ClientType == ClientTypes.SmartHub)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.Bank(TenantId));
+        }
+
         if (ClientType == ClientTypes.Ui)
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, HubGroups.UiBroadcast);
@@ -86,6 +94,11 @@ public class AuraHub : Hub
         _tracker.Unregister(Context.ConnectionId);
 
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, HubGroups.For(ClientType, TenantId));
+
+        if (ClientType == ClientTypes.SmartHub)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, HubGroups.Bank(TenantId));
+        }
 
         if (ClientType == ClientTypes.Ui)
         {

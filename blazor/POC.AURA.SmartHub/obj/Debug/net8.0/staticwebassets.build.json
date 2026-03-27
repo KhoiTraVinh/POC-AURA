@@ -1,1 +1,39 @@
-{"Version":1,"Hash":"Tp8twOcCDvmBJrG8UpLLHfBPfYLoIHmw5SVk+Fo0JpI=","Source":"POC.AURA.SmartHub","BasePath":"/","Mode":"Root","ManifestType":"Build","ReferencedProjectsConfiguration":[],"DiscoveryPatterns":[{"Name":"POC.AURA.SmartHub\\wwwroot","Source":"POC.AURA.SmartHub","ContentRoot":"D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\wwwroot\\","BasePath":"/","Pattern":"**"}],"Assets":[{"Identity":"D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\wwwroot\\app.css","SourceId":"POC.AURA.SmartHub","SourceType":"Discovered","ContentRoot":"D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\wwwroot\\","BasePath":"/","RelativePath":"app#[.{fingerprint}]?.css","AssetKind":"All","AssetMode":"All","AssetRole":"Primary","AssetMergeBehavior":"","AssetMergeSource":"","RelatedAsset":"","AssetTraitName":"","AssetTraitValue":"","Fingerprint":"gdydrd7ouo","Integrity":"RK7FuiBQmNhpG01OB/SeqGhWmsATzooO4EhUW6CMP98=","CopyToOutputDirectory":"Never","CopyToPublishDirectory":"PreserveNewest","OriginalItemSpec":"wwwroot\\app.css","FileLength":14126,"LastWriteTime":"2026-03-26T07:28:12+00:00"}],"Endpoints":[{"Route":"app.css","AssetFile":"D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\wwwroot\\app.css","Selectors":[],"ResponseHeaders":[{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"14126"},{"Name":"Content-Type","Value":"text/css"},{"Name":"ETag","Value":"\"RK7FuiBQmNhpG01OB/SeqGhWmsATzooO4EhUW6CMP98=\""},{"Name":"Last-Modified","Value":"Thu, 26 Mar 2026 07:28:12 GMT"}],"EndpointProperties":[{"Name":"integrity","Value":"sha256-RK7FuiBQmNhpG01OB/SeqGhWmsATzooO4EhUW6CMP98="}]},{"Route":"app.gdydrd7ouo.css","AssetFile":"D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\wwwroot\\app.css","Selectors":[],"ResponseHeaders":[{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"14126"},{"Name":"Content-Type","Value":"text/css"},{"Name":"ETag","Value":"\"RK7FuiBQmNhpG01OB/SeqGhWmsATzooO4EhUW6CMP98=\""},{"Name":"Last-Modified","Value":"Thu, 26 Mar 2026 07:28:12 GMT"}],"EndpointProperties":[{"Name":"fingerprint","Value":"gdydrd7ouo"},{"Name":"integrity","Value":"sha256-RK7FuiBQmNhpG01OB/SeqGhWmsATzooO4EhUW6CMP98="},{"Name":"label","Value":"app.css"}]}]}
+{
+  "Version": 1,
+  "Hash": "GauHJKMS9QTnQv1Ks88DEyPCkSevAkXiLdxwN23Aytk=",
+  "Source": "POC.AURA.SmartHub",
+  "BasePath": "_content/POC.AURA.SmartHub",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [
+    {
+      "Name": "POC.AURA.SmartHub/wwwroot",
+      "Source": "POC.AURA.SmartHub",
+      "ContentRoot": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/",
+      "BasePath": "_content/POC.AURA.SmartHub",
+      "Pattern": "**"
+    }
+  ],
+  "Assets": [
+    {
+      "Identity": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/app.css",
+      "SourceId": "POC.AURA.SmartHub",
+      "SourceType": "Discovered",
+      "ContentRoot": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/",
+      "BasePath": "_content/POC.AURA.SmartHub",
+      "RelativePath": "app.css",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot/app.css"
+    }
+  ]
+}

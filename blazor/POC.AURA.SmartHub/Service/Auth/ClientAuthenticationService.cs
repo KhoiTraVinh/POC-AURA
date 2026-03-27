@@ -137,7 +137,12 @@ public class ClientAuthenticationService(
             await repo.SaveTokenAsync(connectionId, newToken, expiredAt);
             cache.Set($"token:{connectionId}", newToken, expiredAt.AddMinutes(-5));
 
-            events.OnTokenRefreshed(connectionId);
+            // NOTE: do NOT fire OnTokenRefreshed here.
+            // This method is called from both ConnectAsync (initial fetch) and
+            // TokenSchedulerService (proactive refresh). Firing the event during
+            // an initial fetch would start a second ConnectAsync while the first
+            // is still running, creating duplicate hub connections → duplicate jobs.
+            // TokenSchedulerService fires the event itself after calling this method.
             logger.LogInformation("Token refreshed for connection {Id} ({Name})", connectionId, conn.ServerName);
             return newToken;
         }

@@ -1,5 +1,6 @@
 using POC.AURA.SmartHub.Data;
 using POC.AURA.SmartHub.Service.Auth;
+using POC.AURA.SmartHub.Service.Events;
 
 namespace POC.AURA.SmartHub.Service.Scheduling;
 
@@ -11,10 +12,18 @@ namespace POC.AURA.SmartHub.Service.Scheduling;
 /// to break the circular dependency: ClientAuthenticationService → ITokenSchedulerService
 /// → IClientAuthenticationService.
 /// </para>
+/// <para>
+/// After a proactive refresh this service fires IConnectionEventService.OnTokenRefreshed
+/// so HubConnectionWorker reconnects with the new token.
+/// ClientAuthenticationService.RefreshTokenAsync does NOT fire this event — doing so
+/// during the initial ConnectAsync token-fetch would spin up a second hub connection
+/// and cause duplicate job processing.
+/// </para>
 /// </summary>
 public class TokenSchedulerService(
     IServerConnectionRepository repo,
     IServiceScopeFactory scopeFactory,
+    IConnectionEventService connectionEvents,
     ILogger<TokenSchedulerService> logger) : ITokenSchedulerService, IAsyncDisposable
 {
     private readonly Dictionary<int, Timer> _timers = new();
@@ -79,6 +88,10 @@ public class TokenSchedulerService(
             logger.LogWarning("Token refresh returned null for connection {Id}", connectionId);
             return;
         }
+
+        // Fire the event here (not inside RefreshTokenAsync) so that reconnect is
+        // triggered only for proactive scheduled refreshes, not for initial fetches.
+        connectionEvents.OnTokenRefreshed(connectionId);
 
         // Reschedule for next cycle (55-minute default)
         await ScheduleTokenRefreshAsync(connectionId, TimeSpan.FromMinutes(55));

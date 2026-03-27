@@ -2692,32 +2692,24 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\khoi.duong\\.nuget\\packages\\": {},
-    "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
+    "/root/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\POC.AURA.SmartHub.csproj",
+      "projectUniqueName": "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj",
       "projectName": "POC.AURA.SmartHub",
-      "projectPath": "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\POC.AURA.SmartHub.csproj",
-      "packagesPath": "C:\\Users\\khoi.duong\\.nuget\\packages\\",
-      "outputPath": "D:\\POC-AURA\\blazor\\POC.AURA.SmartHub\\obj\\",
+      "projectPath": "/workspace/blazor/POC.AURA.SmartHub/POC.AURA.SmartHub.csproj",
+      "packagesPath": "/root/.nuget/packages/",
+      "outputPath": "/workspace/blazor/POC.AURA.SmartHub/obj/",
       "projectStyle": "PackageReference",
-      "fallbackFolders": [
-        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
-      ],
       "configFilePaths": [
-        "C:\\Users\\khoi.duong\\AppData\\Roaming\\NuGet\\NuGet.Config",
-        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
-        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        "/root/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
       ],
       "sources": {
-        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
-        "C:\\Program Files\\dotnet\\library-packs": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
@@ -2735,8 +2727,7 @@
         "enableAudit": "true",
         "auditLevel": "low",
         "auditMode": "direct"
-      },
-      "SdkAnalysisLevel": "10.0.200"
+      }
     },
     "frameworks": {
       "net8.0": {
@@ -2775,7 +2766,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.201/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/8.0.419/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

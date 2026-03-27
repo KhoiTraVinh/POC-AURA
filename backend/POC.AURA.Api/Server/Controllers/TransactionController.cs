@@ -46,7 +46,8 @@ public class TransactionController : ControllerBase
     [HttpGet("pending")]
     public async Task<IActionResult> GetPending()
     {
-        if (ClientType != ClientTypes.Bank) return Forbid();
+        // SmartHub connects with client_type="smarthub" and handles bank jobs too
+        if (ClientType != ClientTypes.Bank && ClientType != ClientTypes.SmartHub) return Forbid();
 
         var messages = await _jobs.GetPendingAsync(TenantId, MessageTypes.BankTransaction);
 
@@ -73,7 +74,8 @@ public class TransactionController : ControllerBase
     [HttpPost("complete")]
     public async Task<IActionResult> Complete([FromBody] CompleteTransactionRequest req)
     {
-        if (ClientType != ClientTypes.Bank) return Forbid();
+        // SmartHub connects with client_type="smarthub" and handles bank jobs too
+        if (ClientType != ClientTypes.Bank && ClientType != ClientTypes.SmartHub) return Forbid();
 
         await _bank.CompleteTransactionAsync(TenantId, req);
 
