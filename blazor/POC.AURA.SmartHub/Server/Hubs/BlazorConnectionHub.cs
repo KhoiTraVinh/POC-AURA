@@ -21,6 +21,8 @@ public class BlazorConnectionHub(
     ITokenSchedulerService scheduler,
     ILogger<BlazorConnectionHub> logger) : Hub
 {
+    private static readonly JsonSerializerOptions _jsonOptions =
+        new() { PropertyNameCaseInsensitive = true };
     // ── Hub Methods (called by Blazor UI via SignalRService) ──────────────
 
     /// <summary>
@@ -29,8 +31,7 @@ public class BlazorConnectionHub(
     /// </summary>
     public async Task ReceiveServerConnection(string connectionJson)
     {
-        var model = JsonSerializer.Deserialize<ServerConnectionApiModel>(connectionJson,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var model = JsonSerializer.Deserialize<ServerConnectionApiModel>(connectionJson, _jsonOptions);
         if (model is null) return;
 
         var entity = await repo.GetByIdAsync(model.Id);
@@ -58,8 +59,7 @@ public class BlazorConnectionHub(
     /// <summary>Delete a server connection and notify all UI clients.</summary>
     public async Task DeleteServerConnection(string connectionJson)
     {
-        var model = JsonSerializer.Deserialize<ServerConnectionApiModel>(connectionJson,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var model = JsonSerializer.Deserialize<ServerConnectionApiModel>(connectionJson, _jsonOptions);
         if (model is null) return;
 
         await scheduler.DeleteTokenRefreshAsync(model.Id);
@@ -107,8 +107,7 @@ public class BlazorConnectionHub(
     {
         // Production: decrypt with AppProtection/BouncyCastle first
         // POC: treat as plain JSON
-        var dto = JsonSerializer.Deserialize<OAuthCallbackDto>(encodedMessage,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var dto = JsonSerializer.Deserialize<OAuthCallbackDto>(encodedMessage, _jsonOptions);
         if (dto is null) return;
 
         await auth.HandleAuthenticationAsync(dto);

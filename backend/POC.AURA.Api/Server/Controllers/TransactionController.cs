@@ -11,7 +11,7 @@ namespace POC.AURA.Api.Server.Controllers;
 
 /// <summary>
 /// HTTP API for the Blazor SmartHub bank processor.
-/// <para>All endpoints require <c>client_type = "bank"</c> in the JWT.</para>
+/// <para>All endpoints require <c>client_type = "smarthub"</c> (or <c>"bank"</c>) in the JWT.</para>
 /// <list type="bullet">
 ///   <item><c>GET  /api/transaction/pending</c>  — Fetch unprocessed transactions on reconnect.</item>
 ///   <item><c>POST /api/transaction/complete</c> — Report result; releases the global bank lock.</item>

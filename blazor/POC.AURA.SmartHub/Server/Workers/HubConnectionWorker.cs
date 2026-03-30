@@ -39,6 +39,9 @@ public class HubConnectionWorker : BackgroundService
     private readonly SemaphoreSlim _printSemaphore = new(3, 3); // max 3 concurrent print jobs
     private readonly object _lock = new();
 
+    private static readonly JsonSerializerOptions _jsonOptions =
+        new() { PropertyNameCaseInsensitive = true };
+
     // Observable state for Blazor UI (direct injection fallback in POC)
     public Dictionary<int, (string ServerName, string Status, string TenantId)> ConnectionStatuses { get; } = new();
     public List<PrintJobRequest> PendingPrintJobs { get; } = [];
@@ -238,8 +241,7 @@ public class HubConnectionWorker : BackgroundService
             $"[{conn.ServerName}] [PRINT OUT] #{job.Id} {(success ? "Done ✓" : "Failed ✗")}");
 
         // Broadcast job update to UI
-        await _uiHub.Clients.All.SendAsync("JobStatusUpdate",
-            System.Text.Json.JsonSerializer.Serialize(result));
+        await _uiHub.Clients.All.SendAsync("JobStatusUpdate", result);
 
         StateChanged?.Invoke();
     }
@@ -275,8 +277,7 @@ public class HubConnectionWorker : BackgroundService
         AddLog(result.Success ? "success" : "error",
             $"[{conn.ServerName}] [EFT OUT] TXN-{job.TransactionId} {(result.Success ? "Approved ✓" : "Declined ✗")}");
 
-        await _uiHub.Clients.All.SendAsync("JobStatusUpdate",
-            System.Text.Json.JsonSerializer.Serialize(result));
+        await _uiHub.Clients.All.SendAsync("JobStatusUpdate", result);
 
         StateChanged?.Invoke();
     }
@@ -289,8 +290,7 @@ public class HubConnectionWorker : BackgroundService
         {
             using var http = CreateHttpClient(token, conn.NormalizedUrl);
 
-            var printJobs = await http.GetFromJsonAsync<List<PrintJobRequest>>("api/print/pending",
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var printJobs = await http.GetFromJsonAsync<List<PrintJobRequest>>("api/print/pending", _jsonOptions);
             if (printJobs?.Count > 0)
             {
                 AddLog("info", $"[{conn.ServerName}] Recovered {printJobs.Count} pending print job(s)");
@@ -311,8 +311,7 @@ public class HubConnectionWorker : BackgroundService
                 }
             }
 
-            var eftJobs = await http.GetFromJsonAsync<List<EftPosRequest>>("api/transaction/pending",
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var eftJobs = await http.GetFromJsonAsync<List<EftPosRequest>>("api/transaction/pending", _jsonOptions);
             if (eftJobs?.Count > 0)
             {
                 AddLog("info", $"[{conn.ServerName}] Recovered {eftJobs.Count} pending EFT job(s)");

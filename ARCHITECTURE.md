@@ -8,7 +8,11 @@ POC AURA is a multi-tenant, real-time processing system built with:
 - **Frontend** — Angular 17 (standalone components, signals)
 - **Processor** — Blazor Server (SmartHub), acts as a headless worker
 
-All real-time communication flows through a **single unified SignalR hub** (`AuraHub`) backed by JWT authentication. The system demonstrates two independent processing pipelines that share the same hub and token infrastructure.
+All real-time communication flows through a **single unified SignalR hub** (`AuraHub`) backed by JWT authentication. The system demonstrates three independent features that share the same hub and token infrastructure:
+
+1. **Print Job Pipeline** — multi-tenant print job submission and processing
+2. **Bank Transaction Pipeline** — globally-locked EFT/POS transaction processing
+3. **Collaborative Document Editing** — field-level pessimistic locking with heartbeat TTL
 
 ---
 
@@ -17,9 +21,9 @@ All real-time communication flows through a **single unified SignalR hub** (`Aur
 | Layer | Technology |
 |---|---|
 | API | ASP.NET Core 8, SignalR, EF Core 8 |
-| Database | SQL Server (via Docker) |
+| Database | SQL Server 2022 (via Docker) |
 | Frontend | Angular 17, `@microsoft/signalr` |
-| Processor | Blazor Server (SmartHub) |
+| Processor | Blazor Server (SmartHub), SQLite |
 | Auth | JWT Bearer (symmetric HMAC-SHA256) |
 | Container | Docker + Docker Compose |
 
@@ -30,42 +34,46 @@ All real-time communication flows through a **single unified SignalR hub** (`Aur
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  Angular (Browser)                                                        │
-│  PrintHubService  ──── WebSocket ──┐                                     │
-│  BankHubService   ──── WebSocket ──┤                                     │
-└────────────────────────────────────┤                                     │
-                                     ▼
-                          ┌─────────────────────┐
-                          │   ASP.NET Core API   │
-                          │                      │
-                          │  ┌───────────────┐   │
-                          │  │   AuraHub     │◄──┼── /hubs/aura (SignalR)
-                          │  │  (SignalR)    │   │
-                          │  └───────┬───────┘   │
-                          │          │            │
-                          │  ┌───────▼───────┐   │
-                          │  │ IJobRepository│   │
-                          │  │  (EF Core)    │   │
-                          │  └───────┬───────┘   │
-                          │          │            │
-                          │  ┌───────▼───────┐   │
-                          │  │  SQL Server   │   │
-                          │  │  (Messages)   │   │
-                          │  └───────────────┘   │
-                          │                      │
-                          │  HTTP REST API:       │
-                          │  POST /api/print/complete     ◄────────────────┐
-                          │  POST /api/transaction/complete ◄───────────────┤
-                          └─────────────────────┘                         │
-                                                                           │
-┌──────────────────────────────────────────────────────────────────────────┘
+│  PrintHubService    ──── WebSocket ──┐                                   │
+│  TransactionService ──── WebSocket ──┤ (all to /hubs/aura)               │
+│  DocumentService    ──── WebSocket ──┤                                   │
+└─────────────────────────────────────┤                                    │
+                                      ▼
+                         ┌─────────────────────┐
+                         │   ASP.NET Core API   │
+                         │                      │
+                         │  ┌───────────────┐   │
+                         │  │   AuraHub     │◄──┼── /hubs/aura (SignalR)
+                         │  │  (SignalR)    │   │
+                         │  └───────┬───────┘   │
+                         │          │            │
+                         │  ┌───────▼───────┐   │
+                         │  │ IJobRepository│   │
+                         │  │  (EF Core)    │   │
+                         │  └───────┬───────┘   │
+                         │          │            │
+                         │  ┌───────▼───────┐   │
+                         │  │  SQL Server   │   │
+                         │  │  (Messages)   │   │
+                         │  └───────────────┘   │
+                         │                      │
+                         │  HTTP REST API:       │
+                         │  POST /api/print/complete        ◄──────────────┐
+                         │  POST /api/transaction/complete  ◄───────────────┤
+                         └─────────────────────┘                           │
+                                                                            │
+┌───────────────────────────────────────────────────────────────────────────┘
 │  Blazor SmartHub (Server)
-│  ┌──────────────────────────────────────────────────────┐
-│  │  PrintProcessorService  ── SignalR (smarthub client) │
-│  │  BankProcessorService   ── SignalR (bank client)     │
-│  │                                                      │
-│  │  On job complete → POST /api/print/complete          │
-│  │                  → POST /api/transaction/complete    │
-│  └──────────────────────────────────────────────────────┘
+│  ┌───────────────────────────────────────────────────────────────┐
+│  │  HubConnectionWorker — single SignalR connection per server   │
+│  │    client_type = smarthub → added to smarthub-{tenantId}      │
+│  │                           AND bank-{tenantId}                  │
+│  │                                                               │
+│  │  On ExecutePrintJob   → PrintService.ProcessAsync()           │
+│  │                       → POST /api/print/complete              │
+│  │  On ExecuteTransaction → EftPosService.ProcessAsync()         │
+│  │                       → POST /api/transaction/complete        │
+│  └───────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -79,15 +87,21 @@ All connections (Angular UI, Blazor SmartHub) authenticate with **JWT Bearer tok
 | Claim | Key | Example Values |
 |---|---|---|
 | Tenant ID | `tenant_id` | `TenantA`, `TenantB` |
-| Client Type | `client_type` | `ui`, `smarthub`, `bank` |
+| Client Type | `client_type` | `ui`, `smarthub` |
 | User Name | `name` (standard JWT) | `alice@TenantA` |
 | Token Type | `token_type` | `access` |
+
+> **Note**: The `bank` client type was removed. SmartHub now uses a single `smarthub` token and is added to both `smarthub-{tenantId}` and `bank-{tenantId}` groups automatically on connect.
 
 ### Token Issuance
 
 `GET /api/auth/token?tenantId=TenantA&clientType=ui&userName=alice`
 
-Returns `{ accessToken: "..." }`. No password — this is a POC with open token issuance.
+Returns `{ accessToken, refreshToken }`. No password — this is a POC with open token issuance.
+
+`GET /api/auth/refresh?refreshToken=<token>`
+
+Returns a refreshed `{ accessToken, refreshToken }` pair.
 
 ### SignalR Token Transport
 
@@ -97,7 +111,7 @@ WebSocket connections cannot carry custom headers. Angular sends the JWT via que
 wss://api/hubs/aura?access_token=<jwt>
 ```
 
-`JwtSecurityTokenHandler.DefaultMapInboundClaims = false` prevents ASP.NET Core from remapping standard JWT claim names (e.g. `sub` → `ClaimTypes.NameIdentifier`), keeping claim names predictable across hubs and controllers.
+`JwtSecurityTokenHandler.DefaultMapInboundClaims = false` prevents ASP.NET Core from remapping standard JWT claim names, keeping claim names predictable across hubs and controllers.
 
 ---
 
@@ -115,11 +129,18 @@ Single hub at `/hubs/aura` for all features. The hub:
 | Group Name | Members | Purpose |
 |---|---|---|
 | `ui-{tenantId}` | Angular clients | Receive job notifications for a tenant |
-| `smarthub-{tenantId}` | Blazor SmartHub (print) | Receive print jobs to process |
-| `bank-{tenantId}` | Blazor SmartHub (bank) | Receive bank transactions to process |
+| `smarthub-{tenantId}` | Blazor SmartHub | Receive print jobs to process |
+| `bank-{tenantId}` | Blazor SmartHub (same conn) | Receive bank transactions to process |
 | `ui-broadcast` | All Angular clients | Receive global bank status updates |
+| `doc-all` | All Angular clients | Receive collaborative document lock events |
 
-On connect, each client is added to its `{clientType}-{tenantId}` group. Angular (`ui`) clients are additionally added to `ui-broadcast`.
+On connect:
+- Every client is added to its `{clientType}-{tenantId}` group.
+- `smarthub` clients are additionally added to `bank-{tenantId}` (single connection handles both pipelines).
+- `ui` clients are additionally added to `ui-broadcast`, `doc-all`, and receive an immediate `LockSnapshot` and `BankStatus` push.
+
+On disconnect:
+- `ui` clients have all their field locks released automatically, and `FieldUnlocked` is broadcast to `doc-all` for each released lock.
 
 ### Hub Methods (callable by clients)
 
@@ -128,6 +149,10 @@ On connect, each client is added to its `{clientType}-{tenantId}` group. Angular
 | `SubmitPrintJob(request)` | Angular | Persist + route a print job to SmartHub |
 | `SyncPrintJobs(jobIds[])` | Angular | Re-query DB for jobs still shown as pending; emits `PrintJobComplete` for each resolved job |
 | `SubmitTransaction(request)` | Angular | Attempt to acquire the global bank lock and begin processing |
+| `AcquireFieldLock(docId, fieldId)` | Angular | Try to acquire exclusive edit lock on a document field |
+| `ReleaseFieldLock(docId, fieldId)` | Angular | Release a previously acquired field lock |
+| `HeartbeatFieldLock(docId, fieldId)` | Angular | Extend the TTL of an active lock (called every ~8 s) |
+| `UpdateFieldValue(docId, fieldId, value)` | Angular | Broadcast a field value change; caller must hold the lock |
 
 ### Events Pushed by Server
 
@@ -139,9 +164,14 @@ On connect, each client is added to its `{clientType}-{tenantId}` group. Angular
 | `PrintJobStatusUpdate` | Other UI clients in tenant | Notifies peer tabs/users of job completion |
 | `ExecuteTransaction` | `bank-{tenantId}` | Transaction payload routed to bank processor |
 | `TransactionStatusChanged` | `ui-broadcast` | Bank state lifecycle (processing → completed/failed) |
-| `BankStatus` | `ui-broadcast` / caller | Full bank snapshot (busy flag, current txn, history) |
+| `BankStatus` | Caller on connect / `ui-broadcast` | Full bank snapshot (busy flag, current txn, history) |
 | `ClientConnected` | `ui-{tenantId}` | Another client connected to the same tenant |
 | `ClientDisconnected` | `ui-{tenantId}` | A client disconnected |
+| `LockSnapshot` | Caller on connect | Full list of all active field locks |
+| `FieldLocked` | `doc-all` (except caller) | Another user acquired a field lock |
+| `FieldUnlocked` | `doc-all` | A field lock was released or the holder disconnected |
+| `FieldValueChanged` | `doc-all` (except caller) | The lock holder changed a field's value |
+| `FieldsExpiredUnlocked` | `doc-all` | One or more locks expired due to missed heartbeats |
 
 ---
 
@@ -167,7 +197,7 @@ When Angular reconnects, `onReconnected$` fires. The component calls `SyncPrintJ
 
 ### Reconnect Recovery — SmartHub
 
-When SmartHub reconnects to the hub it calls `GET /api/print/pending` to retrieve all `pending` jobs for its tenant, then processes them in order. No print job is permanently lost due to a processor restart.
+When SmartHub reconnects it calls `GET /api/print/pending` to retrieve all `pending` jobs for its tenant, then processes them in order. No print job is permanently lost due to a processor restart.
 
 ---
 
@@ -190,6 +220,33 @@ Angular              AuraHub          TransactionQueueService        SmartHub
 ```
 
 **Key design**: the bank is a **globally shared resource** — only one transaction can be in-flight at any time across all tenants. `TrySubmitAsync` is fail-fast (0 ms wait) and rejects concurrent submissions immediately. The lock is released *before* broadcasting the result, so the next submission can proceed while events are still in flight.
+
+**On connect**: UI clients receive an immediate `BankStatus` push with the current global bank state.
+
+---
+
+## Collaborative Document Pipeline
+
+```
+Angular (User A)     AuraHub          DocumentLockService   Angular (User B)
+   │                    │                    │                    │
+   │── AcquireFieldLock►│                    │                    │
+   │                    │── TryAcquire ─────►│                    │
+   │◄─ { acquired:true }│                    │                    │
+   │                    │── FieldLocked ──────────────────────────►│
+   │── HeartbeatFieldLock every 8s           │                    │
+   │                    │── Heartbeat ───────►│                    │
+   │── UpdateFieldValue►│                    │                    │
+   │                    │── FieldValueChanged ────────────────────►│
+   │── ReleaseFieldLock►│                    │                    │
+   │                    │── Release ─────────►│                    │
+   │                    │── FieldUnlocked ────────────────────────►│
+```
+
+**Lock lifecycle**:
+- TTL is **30 seconds**. If the client misses heartbeats (e.g. browser tab backgrounded, network lag), the `DocumentLockService` hosted service sweeps expired locks and broadcasts `FieldsExpiredUnlocked`.
+- On disconnect, the hub calls `ReleaseAllByConnection(connectionId)` to release all locks held by that connection, then broadcasts `FieldUnlocked` for each.
+- On reconnect, heartbeat timers are stopped immediately to prevent zombie lock re-creation on the new connection.
 
 ---
 
@@ -247,6 +304,7 @@ All DB access flows through `IJobRepository` / `JobRepository` (Scoped). Hubs, c
 | `JwtService` | **Singleton** | Stateless; holds the signing key |
 | `IConnectionTracker` / `ConnectionTracker` | **Singleton** | Must persist across all requests |
 | `ITransactionQueueService` / `TransactionQueueService` | **Singleton** | Holds the global semaphore and in-memory state |
+| `IDocumentLockService` / `DocumentLockService` | **Singleton** | Holds all active field locks; also runs as `IHostedService` to sweep expired locks |
 
 ---
 
@@ -256,55 +314,81 @@ All DB access flows through `IJobRepository` / `JobRepository` (Scoped). Hubs, c
 POC-AURA/
 ├── backend/
 │   └── POC.AURA.Api/
-│       ├── Auth/               # JwtService — token generation & signing key
-│       ├── Constants/          # AuraConstants — MessageTypes, JobStatuses, ClaimNames,
-│       │                       #   ClientTypes, HubGroups, HubEvents
-│       ├── Controllers/        # AuthController, PrintController, TransactionController
-│       ├── Data/               # AppDbContext
-│       ├── Entities/           # Message (EF entity)
-│       ├── Extensions/         # ClaimsPrincipal helpers (GetTenantId, GetClientType, GetUserName)
-│       ├── Hubs/               # AuraHub — unified SignalR hub
-│       ├── Migrations/         # EF Core migrations
-│       ├── Models/             # Request/response DTOs (PrintJob, TransactionRequest, …)
-│       ├── Repositories/       # IJobRepository / JobRepository
-│       └── Services/           # ConnectionTracker, TransactionQueueService,
-│                               #   IConnectionTracker, ITransactionQueueService
+│       ├── Common/
+│       │   ├── Constants/      # AuraConstants — MessageTypes, JobStatuses, ClaimNames,
+│       │   │                   #   ClientTypes, HubGroups, HubEvents
+│       │   ├── Extensions/     # ClaimsPrincipal helpers (GetTenantId, GetClientType, GetUserName)
+│       │   └── Models/         # Request/response DTOs (PrintModels, TransactionModels, DocumentModels)
+│       ├── Data/
+│       │   ├── AppDbContext.cs
+│       │   ├── Entities/       # Message (EF entity)
+│       │   ├── Configurations/ # MessageConfiguration (EF fluent config)
+│       │   └── Repositories/   # IJobRepository / JobRepository
+│       ├── Migrations/         # EF Core migrations (5 migrations → final Messages schema)
+│       └── Server/
+│           ├── Auth/           # JwtService — token generation & signing key
+│           ├── Controllers/    # AuthController (token + refresh), PrintController,
+│           │                   #   TransactionController, ConnectionsController (debug)
+│           ├── Hubs/           # AuraHub — unified SignalR hub
+│           └── Services/       # ConnectionTracker, TransactionQueueService,
+│                               #   DocumentLockService (+ IHostedService sweep)
 ├── frontend/
 │   └── src/app/
 │       ├── core/
-│       │   ├── models/         # TypeScript interfaces (PrintJob, PrintJobResult, …)
+│       │   ├── models/         # TypeScript interfaces (print.models.ts, transaction.models.ts)
 │       │   └── services/
-│       │       ├── auth.service.ts         # Fetches JWT tokens from /api/auth/token
-│       │       ├── print-hub.service.ts    # Per-tenant SignalR connection for print jobs
-│       │       ├── bank-hub.service.ts     # SignalR connection for bank transactions
+│       │       ├── auth.service.ts         # Fetches + caches JWT tokens; handles refresh
 │       │       ├── session.service.ts      # Current user session (tenantId, userName)
+│       │       ├── print-hub.service.ts    # Per-tenant SignalR connection for print jobs
+│       │       ├── transaction.service.ts  # SignalR connection for bank transactions
+│       │       ├── document.service.ts     # SignalR connection for collaborative doc locking
 │       │       └── signalr-retry.ts        # Infinite exponential backoff retry policy
 │       └── features/
 │           ├── login/                      # Login / tenant selection form
 │           ├── multi-tenant/               # Print job submission & result UI
-│           └── transaction-queue/          # Bank transaction submission & history UI
-└── smarthub/
+│           ├── transaction-queue/          # Bank transaction submission & history UI
+│           └── collaborative-doc/          # Multi-user field-level pessimistic locking demo
+└── blazor/
     └── POC.AURA.SmartHub/
-        ├── Services/
-        │   ├── TenantHubServiceBase.cs     # Abstract base — connect, reconnect,
-        │   │                               #   fetch pending jobs on startup
-        │   ├── PrintProcessorService.cs    # Receives ExecutePrintJob; simulates processing;
-        │   │                               #   POST /api/print/complete
-        │   └── BankProcessorService.cs     # Receives ExecuteTransaction; simulates processing;
-        │                                   #   POST /api/transaction/complete
-        └── Pages/                          # Blazor UI showing processor status per tenant
+        ├── Common/
+        │   ├── Constants/      # AppConstants, ClientOAuthConstant, EclipseApiUrl
+        │   ├── Models/         # Auth/connection DTOs
+        │   └── ConnectionStatus.cs
+        ├── Components/         # Blazor pages (Index, Print, Bank, ServerEntry)
+        ├── Data/
+        │   ├── SmartHubDbContext.cs     # SQLite — stores server connections + auth tokens
+        │   ├── Entities/               # ServerConnection, AuthToken
+        │   └── ServerConnectionRepository.cs
+        └── Server/
+            ├── Hubs/           # BlazorConnectionHub — push notifications to Blazor UI
+            ├── Services/       # PrintService, EftPosService, ServerConnectionService,
+            │                   #   ConnectionEventService, TokenSchedulerService
+            └── Workers/        # HubConnectionWorker — long-lived SignalR client connections;
+                                #   InfiniteRetryPolicy
 ```
 
 ---
 
 ## Docker Compose Services
 
+### Production (`docker-compose.yml`)
+
 | Service | Port | Notes |
 |---|---|---|
-| `api` | 5000 | ASP.NET Core 8; runs EF migrations on startup with 5-retry loop |
-| `smarthub` | 5001 | Blazor Server; connects to API as `smarthub` + `bank` clients |
-| `frontend` | 4200 | Angular served by nginx; `/api/` and `/hubs/` proxied to `api` |
 | `db` | 1433 | SQL Server 2022 |
+| `cloudbeaver` | 8978 | DB admin UI (CloudBeaver) |
+| `backend` (api) | 8080 | ASP.NET Core 8; runs EF migrations on startup with 5-retry loop |
+| `smarthub` | 5001 | Blazor Server; connects to API as `smarthub` client |
+| `frontend` | 4200 | Angular served by nginx; `/api/` and `/hubs/` proxied to `backend:8080` |
+
+### Development (`docker-compose.dev.yml`)
+
+| Service | Notes |
+|---|---|
+| `db` | SQL Server 2022 |
+| `cloudbeaver` | DB admin UI |
+| `workspace` | Dev container with source mounted; maps ports for LAN access |
+| `jmeter` | JMeter load testing container |
 
 The frontend `.dockerignore` excludes `node_modules/` and `dist/` to prevent BuildKit from following symlinks in `node_modules/.bin/`.
 
@@ -315,10 +399,14 @@ The frontend `.dockerignore` excludes `node_modules/` and `dist/` to prevent Bui
 | Decision | Rationale |
 |---|---|
 | Single unified hub (`AuraHub`) | All real-time features share one WebSocket per client; simpler token and group management |
+| Single SmartHub connection handles print + bank | SmartHub token has `client_type=smarthub`; hub adds it to both `smarthub-{tenantId}` and `bank-{tenantId}` groups automatically |
 | Fail-fast bank lock | No server-side queuing; clients retry explicitly, keeping the API responsive |
 | `RequestorUserId` stored in Messages | Stable identity across reconnects; raw `connectionId` becomes stale after any disconnect |
 | `ConnectionTracker` (userId → connectionIds) | Routes notification to all active tabs of the submitter; survives reconnect |
 | `SyncPrintJobs` hub method | Resolves race condition where SmartHub processes jobs before Angular joins its group |
 | SmartHub fetches pending jobs on reconnect | Guarantees no work is lost if the processor container restarts |
+| Field lock TTL 30 s + heartbeat every 8 s | Locks auto-expire if the editing user crashes or navigates away without releasing |
+| Stop heartbeats on `onreconnecting` | Prevents zombie locks: the server releases all locks for the old connection in `OnDisconnectedAsync`; without stopping timers, a heartbeat via the new connection would re-create a lock with an empty `ConnectionId` that can never be released |
+| `LockSnapshot` + `BankStatus` pushed on connect | UI clients get full current state immediately without polling |
 | Repository pattern | Keeps EF Core queries out of hubs and controllers; single testable DB layer |
 | First migration creates complete final schema | Avoids EF Core alphabetical sort issues with dependent migrations; schema is correct from the very first `Migrate()` call |

@@ -43,6 +43,9 @@ export interface FieldValueChanged {
 export class DocumentService {
   private hub: signalR.HubConnection | undefined;
   private heartbeatTimers = new Map<string, ReturnType<typeof setInterval>>();
+  // Tracks fields this client has acquired { key → { docId, fieldId } }.
+  // Used to re-acquire locks transparently after a reconnect.
+  private claimedFields = new Map<string, { docId: string; fieldId: string }>();
 
   // ── Event subjects ──────────────────────────────────────────────────────
   private readonly _lockSnapshot$       = new Subject<FieldLockInfo[]>();
@@ -92,8 +95,16 @@ export class DocumentService {
       this.stopAllHeartbeats();
       this._connectionStatus$.next('reconnecting');
     });
-    this.hub.onreconnected(() => this._connectionStatus$.next('connected'));
-    this.hub.onclose(()      => this._connectionStatus$.next('disconnected'));
+    this.hub.onreconnected(async () => {
+      this._connectionStatus$.next('connected');
+      // The server assigns a new connectionId on reconnect. The old connection's
+      // OnDisconnectedAsync will soon fire and call ReleaseAllByConnection(oldId),
+      // which releases any lock still registered under the old connectionId.
+      // Re-acquire all claimed fields now so the lock is updated to the new connectionId
+      // before that cleanup fires — preventing a phantom lock/unlock cycle on all clients.
+      await this.reacquireClaimedFields();
+    });
+    this.hub.onclose(() => this._connectionStatus$.next('disconnected'));
 
     this.hub.on('LockSnapshot',          (locks: FieldLockInfo[])                    => this._lockSnapshot$.next(locks));
     this.hub.on('FieldLocked',           (info: FieldLockInfo)                        => this._fieldLocked$.next(info));
@@ -112,6 +123,7 @@ export class DocumentService {
 
   async disconnect(): Promise<void> {
     this.stopAllHeartbeats();
+    this.claimedFields.clear();
     await this.hub?.stop();
     this._connectionStatus$.next('disconnected');
   }
@@ -121,13 +133,18 @@ export class DocumentService {
   /** Tries to acquire exclusive edit rights on a document field. */
   async acquireFieldLock(docId: string, fieldId: string): Promise<LockAcquireResult> {
     if (!this.hub) throw new Error('DocumentService: not connected');
-    return this.hub.invoke<LockAcquireResult>('AcquireFieldLock', docId, fieldId);
+    const result = await this.hub.invoke<LockAcquireResult>('AcquireFieldLock', docId, fieldId);
+    if (result.acquired) {
+      this.claimedFields.set(`${docId}:${fieldId}`, { docId, fieldId });
+    }
+    return result;
   }
 
   /** Releases a previously acquired field lock. */
   async releaseFieldLock(docId: string, fieldId: string): Promise<void> {
     if (!this.hub) return;
     this.stopHeartbeat(docId, fieldId);
+    this.claimedFields.delete(`${docId}:${fieldId}`);
     await this.hub.invoke('ReleaseFieldLock', docId, fieldId);
   }
 
@@ -164,5 +181,35 @@ export class DocumentService {
   private stopAllHeartbeats(): void {
     this.heartbeatTimers.forEach(timer => clearInterval(timer));
     this.heartbeatTimers.clear();
+  }
+
+  /**
+   * Called after every reconnect. Re-invokes AcquireFieldLock for each field
+   * this client held before the disconnect, then restarts the heartbeat timer.
+   *
+   * Why this is needed: SignalR assigns a NEW connectionId on reconnect. The old
+   * connection's OnDisconnectedAsync will fire shortly after and call
+   * ReleaseAllByConnection(oldConnectionId). If we don't re-acquire first, that
+   * cleanup releases the lock (connectionId still points to the old connection)
+   * and broadcasts FieldUnlocked to every client — causing the spam lock/unlock
+   * loop visible in the UI.
+   *
+   * If another user grabbed the lock during the disconnect window, re-acquire
+   * fails gracefully: we drop the claim and stop the heartbeat.
+   */
+  private async reacquireClaimedFields(): Promise<void> {
+    for (const [key, { docId, fieldId }] of Array.from(this.claimedFields)) {
+      try {
+        const result = await this.hub!.invoke<LockAcquireResult>('AcquireFieldLock', docId, fieldId);
+        if (result.acquired) {
+          this.startHeartbeat(docId, fieldId);
+        } else {
+          // Someone else acquired the lock while we were disconnected — give it up.
+          this.claimedFields.delete(key);
+        }
+      } catch {
+        this.claimedFields.delete(key);
+      }
+    }
   }
 }
