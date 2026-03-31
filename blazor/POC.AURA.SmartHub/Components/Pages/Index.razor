@@ -1,0 +1,173 @@
+@page "/"
+@rendermode InteractiveServer
+@inject ServerConnectionService ConnSvc
+@inject HubConnectionWorker Worker
+@implements IDisposable
+
+<div class="page">
+
+  <div class="page-header">
+    <h1>Eclipse SmartHub — Connection Manager</h1>
+    <p class="page-sub">Manage Aura server connections. Print and EFT jobs are processed automatically.</p>
+  </div>
+
+  <!-- ── Toolbar ─────────────────────────────────────────────────────────── -->
+  <div class="toolbar">
+    <a class="btn btn-primary" href="/server-entry">+ Add Server Connection</a>
+  </div>
+
+  <!-- ── Connection List ───────────────────────────────────────────────────── -->
+  @if (_connections.Count == 0)
+  {
+    <div class="card empty-state">
+      <div class="empty-icon">⚡</div>
+      <div class="empty-title">No server connections yet</div>
+      <div class="empty-desc">Click "Add Server Connection" to connect to an Aura server.</div>
+    </div>
+  }
+  else
+  {
+    <div class="connection-grid">
+      @foreach (var conn in _connections)
+      {
+        var hubStatus = GetStatus(_hubStatuses, conn.Id);
+
+        <div class="conn-card @(conn.Status == ConnectionStatus.Error ? "conn-card-error" : "")">
+          <div class="conn-header">
+            <div class="conn-title">
+              <span class="conn-name">@conn.ServerName</span>
+              @if (conn.Company is not null)
+              {
+                <span class="conn-company">@conn.Company</span>
+              }
+            </div>
+            <div class="conn-status-dot @StatusDotClass(conn.Status)" title="@conn.Status.ToString()"></div>
+          </div>
+
+          <div class="conn-meta">
+            <span class="meta-item">🔗 @conn.ServerUrl</span>
+            <span class="meta-item">🏢 Tenant: <code>@conn.TenantId</code></span>
+            @if (conn.Message is not null)
+            {
+              <span class="meta-item meta-msg @(conn.Status == ConnectionStatus.Error ? "meta-error" : "")">
+                @conn.Message
+              </span>
+            }
+          </div>
+
+          <div class="conn-hubs">
+            <div class="hub-badge @HubBadgeClass(hubStatus)">
+              ⚡ Hub: @hubStatus
+            </div>
+            <div class="hub-badge hub-connected">
+              🖨 Print: active
+            </div>
+            <div class="hub-badge hub-connected">
+              🏦 EFT: active
+            </div>
+          </div>
+
+          @if (conn.AuthToken is not null)
+          {
+            <div class="conn-token-info">
+              Token expires: @conn.AuthToken.ExpiredAt.ToLocalTime().ToString("HH:mm dd/MM")
+            </div>
+          }
+
+          <div class="conn-actions">
+            <button class="btn btn-sm btn-outline" @onclick="() => ReLoginAsync(conn.Id)"
+                    disabled="@_busy">
+              ↻ Re-Login
+            </button>
+            <button class="btn btn-sm btn-danger" @onclick="() => DeleteAsync(conn.Id)"
+                    disabled="@_busy">
+              Delete
+            </button>
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ── Activity Log ───────────────────────────────────────────────────── -->
+  <div class="card" style="margin-top:24px">
+    <div class="card-title">Activity Log</div>
+    <div class="log-box">
+      @foreach (var (level, msg, time) in Worker.Logs.TakeLast(30).Reverse())
+      {
+        <div class="log-entry log-@level">
+          <span class="log-time">@time.ToString("HH:mm:ss")</span>
+          <span>@msg</span>
+        </div>
+      }
+      @if (!Worker.Logs.Any())
+      {
+        <div class="log-empty">No activity yet.</div>
+      }
+    </div>
+  </div>
+
+</div>
+
+@code {
+  private List<ServerConnection> _connections = [];
+  private Dictionary<int, (string ServerName, string Status, string TenantId)> _hubStatuses = [];
+  private bool _busy;
+
+  protected override async Task OnInitializedAsync()
+  {
+    ConnSvc.StateChanged += Refresh;
+    Worker.StateChanged  += Refresh;
+    await LoadAsync();
+  }
+
+  private async Task LoadAsync()
+  {
+    _connections = await ConnSvc.GetAllAsync();
+    _hubStatuses = new(Worker.ConnectionStatuses);
+  }
+
+  private void Refresh() => InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+
+  private async Task ReLoginAsync(int id)
+  {
+    _busy = true;
+    await ConnSvc.ReLoginAsync(id);
+    _busy = false;
+  }
+
+  private async Task DeleteAsync(int id)
+  {
+    _busy = true;
+    await ConnSvc.DeleteServerAsync(id);
+    _busy = false;
+  }
+
+  private static string GetStatus(
+    Dictionary<int, (string ServerName, string Status, string TenantId)> dict, int id)
+    => dict.TryGetValue(id, out var v) ? v.Status : "—";
+
+  private static string StatusDotClass(ConnectionStatus s) => s switch
+  {
+    ConnectionStatus.Online     => "dot-green",
+    ConnectionStatus.Connecting => "dot-yellow",
+    ConnectionStatus.Processing => "dot-yellow",
+    ConnectionStatus.Error      => "dot-red",
+    _                           => "dot-gray"
+  };
+
+  private static string HubBadgeClass(string s) => s switch
+  {
+    "connected"    => "hub-connected",
+    "connecting"   => "hub-connecting",
+    "reconnecting" => "hub-connecting",
+    "error"        => "hub-error",
+    _              => "hub-disconnected"
+  };
+
+  public void Dispose()
+  {
+    ConnSvc.StateChanged -= Refresh;
+    Worker.StateChanged  -= Refresh;
+  }
+}

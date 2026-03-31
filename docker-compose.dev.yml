@@ -3,7 +3,7 @@ name: poc-aura-dev
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: poc-aura-sqlserver-dev
+    container_name: poc-aura-dev-sqlserver
     restart: unless-stopped
     environment:
       - ACCEPT_EULA=Y
@@ -24,7 +24,7 @@ services:
 
   cloudbeaver:
     image: dbeaver/cloudbeaver:latest
-    container_name: poc-aura-cloudbeaver-dev
+    container_name: poc-aura-dev-cloudbeaver
     restart: unless-stopped
     ports:
       - "8978:8978"
@@ -36,84 +36,47 @@ services:
     networks:
       - poc-dev-network
 
-  # VS Code Dev Containers connects here — co ca .NET 8 + Node 22
   workspace:
     build:
       context: .devcontainer
       dockerfile: Dockerfile
-    container_name: poc-aura-workspace
+    container_name: poc-aura-dev-workspace
     volumes:
       - .:/workspace:cached
-      - workspace-node-modules:/workspace/frontend/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://0.0.0.0:5000
-      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;
-      - DOTNET_USE_POLLING_FILE_WATCHER=true
-      - CHOKIDAR_USEPOLLING=true
+      - DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER=1
     ports:
-      - "5000:5000"
-      - "4200:4200"
+      - "4300:4300"   # Angular — accessible on LAN via 192.168.50.113:4300
+      - "5000:5000"   # Backend API
+      - "5001:5001"   # Blazor SmartHub
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    networks:
+      - poc-dev-network
     depends_on:
       sqlserver:
         condition: service_healthy
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp=unconfined
-    networks:
-      - poc-dev-network
+    command: sleep infinity
 
-  # Standalone runners - dung khi KHONG dung devcontainer
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
-    container_name: poc-aura-backend-dev
-    restart: unless-stopped
-    profiles: ["standalone"]
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://0.0.0.0:8080
-      - DOTNET_USE_POLLING_FILE_WATCHER=true
-      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;
-    ports:
-      - "5000:8080"
+  jmeter:
+    image: justb4/jmeter:5.6.3
+    container_name: poc-aura-dev-jmeter
     volumes:
-      - ./backend:/app
-    depends_on:
-      sqlserver:
-        condition: service_healthy
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp=unconfined
+      - ./tests/jmeter:/tests
+    environment:
+      - BASE_HOST=workspace
+      - BASE_PORT=5000
     networks:
       - poc-dev-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: poc-aura-frontend-dev
-    restart: unless-stopped
-    profiles: ["standalone"]
-    ports:
-      - "4200:4200"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - CHOKIDAR_USEPOLLING=true
-    depends_on:
-      - backend
-    networks:
-      - poc-dev-network
+    profiles:
+      - testing
+    entrypoint: ["sleep", "infinity"]
 
 volumes:
   sqlserver-dev-data:
   cloudbeaver-dev-data:
-  workspace-node-modules:
 
 networks:
   poc-dev-network:

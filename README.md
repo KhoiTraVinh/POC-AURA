@@ -16,32 +16,16 @@
 
 ---
 
-## Kiến trúc & Chiến lược Resilience
+## Tổng quan 4 Use Cases
 
-Dự án dùng mô hình **API-First + SignalR Signal-Only** để đảm bảo không mất dữ liệu khi mất kết nối:
+POC này demo 4 pattern SignalR thực tế, mỗi cái giải quyết một bài toán khác nhau:
 
-```
-[Client gửi message]
-  POST /api/messages → lưu DB → Hub bắn tín hiệu "NewMessageNotification" (chỉ signal, không có data)
-
-[Client nhận tín hiệu]
-  GET /api/messages/{groupId}?afterMessageId={pointer}  ← lấy data từ API
-
-[Token hết hạn / mất mạng → reconnect]
-  GET /api/messages/receipt?groupId=&staffId=           ← lấy pointer bền vững từ server
-  GET /api/messages/{groupId}?afterMessageId={pointer}  ← fetch messages bị miss
-
-[Disconnect]
-  Hub.OnDisconnectedAsync → tự động rời group → không nhận signal thừa
-```
-
-**Tại sao không gửi data qua SignalR?**
-- Token hết hạn (10 phút) → connection bị ngắt → mất data nếu gửi qua SignalR
-- Bằng cách chỉ dùng SignalR làm signal, client luôn có thể dùng API để đồng bộ lại sau reconnect
-
-**Pointer (ReadReceipt)**
-- `ReadReceipt.LastReadMessageId` lưu trên server — bền vững qua mọi reconnect
-- Mỗi client (staffId) có pointer riêng → độc lập, không ảnh hưởng nhau
+| # | Route | Hub | Vấn đề cốt lõi |
+|---|-------|-----|----------------|
+| 0 | `/chat` | `ChatHub` | Resilient chat — signal-only, no data qua SignalR, reconnect đồng bộ pointer |
+| 1 | `/multi-tenant` | `PrintHub` | Tenant isolation — JWT claim `tenant_id`, Groups tách biệt hoàn toàn |
+| 2 | `/transaction` | `TransactionHub` | Fail-fast lock — `SemaphoreSlim(1,1) + Wait(0)`, reject ngay nếu bận |
+| 3 | `/collab-doc` | `DocumentHub` | Pessimistic field lock — TTL 30s + heartbeat + auto-release on disconnect |
 
 ---
 
@@ -52,26 +36,33 @@ POC-AURA/
 ├── .devcontainer/
 │   ├── Dockerfile              # Workspace image: .NET 8 + Node 22 + vsdbg
 │   └── devcontainer.json       # VS Code Dev Containers config
-├── .vscode/
-│   ├── launch.json             # Debug: Backend Launch, Attach, Chrome, Full Stack
-│   ├── tasks.json              # Tasks: run BE, run FE, run full stack, docker
-│   ├── settings.json
-│   └── extensions.json
 ├── backend/
 │   └── POC.AURA.Api/
+│       ├── Auth/JwtService.cs              # JWT access+refresh token (10min/24h)
 │       ├── Controllers/
-│       │   └── MessagesController.cs   # REST API (GET receipt, GET messages, POST, read)
-│       ├── Data/AppDbContext.cs
-│       ├── DTOs/MessageModels.cs
-│       ├── Entities/                   # Message, Group, Member, ReadReceipt
-│       ├── Hubs/ChatHub.cs             # SignalR Hub (auto-leave on disconnect)
+│       │   ├── AuthController.cs           # POST /api/auth/token, /refresh
+│       │   └── MessagesController.cs       # Chat REST API
+│       ├── Hubs/
+│       │   ├── ChatHub.cs                  # Signal-only hub, auto-leave on disconnect
+│       │   ├── PrintHub.cs                 # [Authorize] multi-tenant hub
+│       │   ├── TransactionHub.cs           # Fail-fast lock hub
+│       │   └── DocumentHub.cs             # Field-level locking hub
+│       ├── Models/                         # PrintModels, TransactionModels, DocumentModels
+│       ├── Services/
+│       │   ├── TransactionQueueService.cs  # SemaphoreSlim fail-fast
+│       │   └── DocumentLockService.cs      # ConcurrentDict + TTL + background cleanup
 │       └── Program.cs
-├── frontend/
-│   └── src/app/
-│       ├── core/services/chat.service.ts   # SignalR + API + pointer logic
-│       └── features/chat/                  # Chat UI với disconnect/reconnect simulation
-├── docker-compose.yml          # Production
-└── docker-compose.dev.yml      # Development (devcontainer + standalone)
+├── frontend/src/app/
+│   ├── core/services/
+│   │   ├── auth.service.ts                 # Token cache + auto-refresh
+│   │   ├── print-hub.service.ts            # Multi-connection manager per tenant
+│   │   ├── transaction.service.ts          # Bank status stream
+│   │   └── document.service.ts             # Lock state + heartbeat timer
+│   └── features/
+│       ├── chat/                           # Chat UI
+│       ├── multi-tenant/                   # Tenant isolation demo
+│       ├── transaction-queue/              # Fail-fast bank demo
+│       └── collaborative-doc/              # Field-lock editor
 ```
 
 ---
@@ -86,7 +77,7 @@ docker compose up --build
 
 | Service     | URL                           |
 |-------------|-------------------------------|
-| Frontend    | http://localhost              |
+| Frontend    | http://localhost:4200         |
 | Backend API | http://localhost:5000         |
 | Swagger     | http://localhost:5000/swagger |
 | CloudBeaver | http://localhost:8978         |
@@ -96,201 +87,313 @@ docker compose up --build
 
 ## Development — VS Code Dev Containers (khuyến nghị)
 
-Cách này VS Code connect thẳng vào container `workspace` có sẵn **.NET 8 + Node 22 + vsdbg**, code cả BE lẫn FE trong cùng 1 môi trường với đầy đủ IntelliSense và debug.
-
 ### Yêu cầu
 
 - Docker Desktop đang chạy
 - VS Code extension: **Dev Containers** (`ms-vscode-remote.remote-containers`)
 
-### Bước 1: Clone và mở project
+### Các bước
 
 ```bash
 git clone <repo-url>
 code POC-AURA
+# VS Code popup → "Reopen in Container"
+# Hoặc F1 → Dev Containers: Reopen in Container
 ```
 
-### Bước 2: Reopen in Container
-
-VS Code tự detect `.devcontainer/` → popup **"Reopen in Container"** → click.
-
-Hoặc: `F1` → `Dev Containers: Reopen in Container`
-
-> Lần đầu build image mất ~5 phút. Các lần sau dùng cache.
-
-### Bước 3: Chạy full stack
-
-Sau khi vào container, terminal đang ở trong container — có sẵn `dotnet`, `node`, `ng`.
-
-**Cách A — VS Code Task (khuyến nghị):**
+**Chạy full stack:**
 ```
-Ctrl+Shift+B → chọn "run: full stack"
-```
-Sẽ mở 2 terminal song song: Backend (port 5000) + Frontend (port 4200).
-
-**Cách B — Terminal thủ công:**
-```bash
-# Terminal 1 — Backend
-cd /workspace/backend
-dotnet watch run --project POC.AURA.Api/POC.AURA.Api.csproj --urls http://0.0.0.0:5000
-
-# Terminal 2 — Frontend
-cd /workspace/frontend
-npm start
+Ctrl+Shift+B → "run: full stack"
 ```
 
-### Ports được forward tự động
+| Port | Service |
+|------|---------|
+| 4200 | Angular dev server |
+| 5000 | Backend API + Swagger |
+| 8978 | CloudBeaver |
+| 1433 | SQL Server |
 
-| Port | Service                              |
-|------|--------------------------------------|
-| 4200 | Angular dev server (tự mở browser)   |
-| 5000 | Backend API + Swagger                |
-| 8978 | CloudBeaver DB Manager               |
-| 1433 | SQL Server                           |
+**Debug:**
+- `F5` → **"🔵 Backend: Launch & Debug"** — breakpoint trong `.cs`
+- `F5` → **"🟠 Frontend: Chrome"** — breakpoint trong `.ts`
+- `F5` → **"🚀 Full Stack Debug"** — cả hai cùng lúc
 
 ---
 
-## Debug trong Dev Container
+## Use Case 0: Chat Resilient (Signal-Only Pattern)
 
-### Backend Debug
-
-**Cách A — F5 Launch (khuyến nghị):**
-1. Đảm bảo backend **chưa** chạy (hoặc dùng Attach thay thế)
-2. `F5` → chọn **"🔵 Backend: Launch & Debug"**
-3. VS Code tự build rồi launch với debugger attached
-4. Đặt breakpoint bình thường trong file `.cs`
-
-**Cách B — Attach vào `dotnet watch` (hot reload + debug cùng lúc):**
-1. `Ctrl+Shift+B` → **"run: backend (dotnet watch)"** — để terminal chạy nền
-2. `F5` → chọn **"🔵 Backend: Attach (process)"**
-3. Chọn process `POC.AURA.Api` từ danh sách
-4. Sửa code → lưu → `dotnet watch` tự reload, breakpoint vẫn giữ nguyên
-
-### Frontend Debug
+### Kiến trúc
 
 ```
-F5 → "🟠 Frontend: Chrome (localhost:4200)"
-```
-Breakpoint đặt thẳng trong file `.ts` — source map tự động map sang JS.
+[Client gửi message]
+  POST /api/messages → lưu DB → Hub signal "NewMessageNotification" (không có data)
 
-Hoặc dùng Edge: `F5` → **"🟠 Frontend: Edge (localhost:4200)"**
+[Client nhận signal]
+  GET /api/messages/{groupId}?afterMessageId={pointer}
 
-### Full Stack Debug (BE + FE cùng lúc)
-
-```
-F5 → "🚀 Full Stack Debug"
-```
-Launches cả Backend (với debugger) lẫn Chrome (với source map). Breakpoint trong cả `.cs` và `.ts` đều hoạt động.
-
----
-
-## Development — Standalone (không dùng Dev Container)
-
-Chạy BE + FE trong container riêng, không cần VS Code Dev Containers:
-
-```bash
-docker compose -f docker-compose.dev.yml up --build --profile standalone
+[Reconnect sau mất mạng]
+  GET /api/messages/receipt?groupId=&staffId=   ← pointer bền vững từ server
+  GET /api/messages/{groupId}?afterMessageId=   ← fetch messages bị miss
 ```
 
-| Service     | URL                           |
-|-------------|-------------------------------|
-| Angular     | http://localhost:4200         |
-| Backend API | http://localhost:5000         |
-| CloudBeaver | http://localhost:8978         |
-| SQL Server  | localhost:1433                |
+**Tại sao không gửi data qua SignalR?**
+- Token hết hạn (10 phút) → connection bị ngắt → mất data nếu gửi qua hub
+- Signal-only: client luôn dùng API để đồng bộ lại sau reconnect
+- `ReadReceipt.LastReadMessageId` lưu server — bền vững qua mọi reconnect
 
-> **Lưu ý:** Chế độ standalone không hỗ trợ debug — chỉ dùng để xem sản phẩm trong môi trường dev mà không cần VS Code Dev Containers.
-
----
-
-## SignalR Hub Events (`/hubs/chat`)
-
-### Server → Client
-
-| Event | Payload | Mô tả |
-|---|---|---|
-| `NewMessageNotification` | _(không có data)_ | Có message mới trong group — client tự gọi API lấy |
-| `UserReadReceipt` | `{ staffId, messageId }` | Client khác đã cập nhật pointer |
-
-### Client → Server
-
-| Method | Tham số | Mô tả |
-|---|---|---|
-| `JoinGroup` | `groupId: int` | Tham gia group để nhận signal |
-| `LeaveGroup` | `groupId: int` | Rời group (gọi khi stopConnection) |
-
-> **Auto-leave:** Khi connection bị đóng bất kỳ lý do gì (token hết hạn, mất mạng, đóng tab, crash), Hub tự động remove connection khỏi group qua `OnDisconnectedAsync`.
-
----
-
-## REST API Endpoints
+### REST API Endpoints (Chat)
 
 | Method | Endpoint | Mô tả |
-|---|---|---|
-| `GET` | `/api/messages/{groupId}?afterMessageId=` | Lấy messages mới hơn pointer |
-| `GET` | `/api/messages/receipt?groupId=&staffId=` | Lấy pointer hiện tại (LastReadMessageId) |
-| `POST` | `/api/messages` | Tạo message mới → signal tới group |
-| `POST` | `/api/messages/read` | Cập nhật pointer (LastReadMessageId) |
-| `GET` | `/health` | Health check |
+|--------|----------|-------|
+| `GET`  | `/api/messages/{groupId}?afterMessageId=` | Lấy messages mới hơn pointer |
+| `GET`  | `/api/messages/receipt?groupId=&staffId=` | Lấy pointer hiện tại |
+| `POST` | `/api/messages` | Tạo message → signal tới group |
+| `POST` | `/api/messages/read` | Cập nhật pointer |
+
+### SignalR Events (ChatHub `/hubs/chat`)
+
+**Server → Client:**
+
+| Event | Payload | Mô tả |
+|-------|---------|-------|
+| `NewMessageNotification` | _(không có data)_ | Có message mới — client tự gọi API |
+| `UserReadReceipt` | `{ staffId, messageId }` | Client khác đã cập nhật pointer |
+
+**Client → Server:**
+
+| Method | Tham số | Mô tả |
+|--------|---------|-------|
+| `JoinGroup` | `groupId: int` | Tham gia group |
+| `LeaveGroup` | `groupId: int` | Rời group |
+
+### Test Cases
+
+**Case 1 — Happy path**
+1. Tab A: join groupId=1, staffId=1 — Tab B: join groupId=1, staffId=2
+2. Tab B gửi 3 messages
+3. ✓ Tab A nhận đủ 3 messages realtime
+
+**Case 2 — Reconnect sau mất kết nối ⭐**
+1. Cả 2 tab join groupId=1
+2. Tab A nhấn **"Ngắt kết nối"**
+3. Tab B gửi 4 messages
+4. Tab A nhấn **"Kết nối lại"**
+5. ✓ Banner "⟳ Đang đồng bộ 4 tin nhắn bị miss..." xuất hiện
+6. ✓ Tab A hiển thị đủ 4 messages sau reconnect
 
 ---
 
-## Hướng dẫn sử dụng
+## Use Case 1: Multi-Tenant Print Hub
 
-1. Mở `http://localhost:4200` (dev) hoặc `http://localhost` (prod)
-2. Nhập **Username**, **Staff ID** (mỗi tab chọn số khác nhau), **Group ID**
-3. Click **Join Chat**
-4. Gửi tin nhắn bằng cách nhập và nhấn **Enter** (hoặc click nút gửi)
-5. Để mô phỏng nhiều clients: **mở nhiều tab** với cùng Group ID
+### Kiến trúc
 
-**Nút mô phỏng (chỉ hiện sau khi join):**
-- **"Ngắt kết nối"** — mô phỏng token hết hạn hoặc mất mạng
-- **"Kết nối lại"** — reconnect và tự động đồng bộ messages bị miss
+```
+[Angular UI - TenantA]  →  POST /api/auth/token { tenantId: "A", clientType: "ui" }
+                         →  JWT { tenant_id: "A", client_type: "ui" }
+                         →  Connect /hubs/print (Bearer token)
+                         →  Server: Groups.Add(connectionId, "ui-A")
+
+[SmartHub - TenantA]    →  POST /api/auth/token { tenantId: "A", clientType: "smarthub" }
+                         →  Connect /hubs/print
+                         →  Server: Groups.Add(connectionId, "smarthub-A")
+
+[Angular UI gửi job]
+  Invoke "SubmitPrintJob" → Server route tới "smarthub-A" (KHÔNG đến smarthub-B)
+
+[SmartHub hoàn thành]
+  Invoke "ReportPrintJobComplete" → Server route về connectionId gốc + broadcast "ui-A"
+```
+
+**Tenant isolation đảm bảo bởi:**
+- JWT `tenant_id` claim — server tự đọc, client không thể giả mạo
+- Group names: `ui-{tenantId}` và `smarthub-{tenantId}` — tách biệt hoàn toàn
+- `[Authorize]` attribute trên hub — unauthenticated request bị reject ở tầng middleware
+
+### Auth Endpoints
+
+| Method | Endpoint | Body |
+|--------|----------|------|
+| `POST` | `/api/auth/token` | `{ tenantId, clientType, userName }` |
+| `POST` | `/api/auth/refresh` | `{ refreshToken }` |
+
+Token: **access 10 phút**, **refresh 24 giờ**. Frontend tự refresh khi còn < 60s.
+
+### SignalR Events (PrintHub `/hubs/print`)
+
+**Client → Server:**
+
+| Method | Tham số | Mô tả |
+|--------|---------|-------|
+| `SubmitPrintJob` | `PrintJobRequest` | UI gửi job → route tới `smarthub-{tenant}` |
+| `ReportPrintJobComplete` | `PrintJobResult` | SmartHub báo cáo kết quả |
+
+**Server → Client:**
+
+| Event | Nhận bởi | Mô tả |
+|-------|----------|-------|
+| `ExecutePrintJob` | `smarthub-{tenantId}` | Job cần thực thi |
+| `PrintJobQueued` | Caller (UI) | Xác nhận job đã gửi tới SmartHub |
+| `PrintJobComplete` | requestorConnectionId | Kết quả từ SmartHub |
+| `PrintJobStatusUpdate` | `ui-{tenantId}` | Broadcast status cho tất cả UI cùng tenant |
+| `ClientConnected` | `ui-{tenantId}` | Thông báo có client kết nối mới |
+| `ClientDisconnected` | `ui-{tenantId}` | Thông báo client rời |
+
+### Test Cases
+
+**Case 1 — Tenant isolation**
+1. Mở `/multi-tenant` — connect cả TenantA và TenantB
+2. TenantA gửi print job
+3. ✓ SmartHub TenantA nhận job, SmartHub TenantB **không nhận**
+4. SmartHub TenantA click "Done"
+5. ✓ Kết quả chỉ về UI TenantA, TenantB không bị ảnh hưởng
+
+**Case 2 — Job flow hoàn chỉnh**
+1. Connect TenantA (UI + SmartHub)
+2. Nhập document name + content → "Send Print Job"
+3. ✓ Activity log: `[UI] Queued → SmartHub` rồi `[SmartHub] Received job`
+4. SmartHub click "✓ Done" hoặc "✗ Fail"
+5. ✓ `[UI] Job #xxx done/FAILED` xuất hiện trong log
 
 ---
 
-## Test Cases — Mô phỏng Reconnect
+## Use Case 2: Sequential Bank Transaction (Fail-Fast)
 
-### Case 1 — Happy path
-1. **Tab A**: join groupId=1, staffId=1
-2. **Tab B**: join groupId=1, staffId=2
-3. Tab B gửi 3 messages
+### Kiến trúc
 
-**Verify:** Tab A nhận đủ 3 messages realtime ✓
+```
+[Client submit transaction]
+  Invoke "SubmitTransaction" → TransactionQueueService.TrySubmit()
+
+[TrySubmit logic]
+  _bankLock.Wait(0)  ← non-blocking try-acquire (SemaphoreSlim(1,1))
+
+  ├─ true  (bank free):  spawn RunTransactionAsync (fire-and-forget), return "accepted"
+  └─ false (bank busy):  return "rejected" ngay lập tức — NO queuing, NO waiting
+
+[RunTransactionAsync]
+  Signal "processing" → sleep 3-7s → Signal "completed/failed" → release lock
+  Sau mỗi state change: broadcast "BankStatus" tới ALL clients
+```
+
+**Tại sao Fail-Fast thay vì Queue?**
+
+| Approach | Cơ chế | Rủi ro |
+|----------|--------|--------|
+| `WaitAsync(ct)` | Task chờ trong semaphore's internal waiter list | Memory leak — tasks pile up |
+| `Wait(0)` ← dùng | Trả về false ngay nếu bận | **Không có task nào bị treo** |
+
+Tương đương DB: `SELECT FOR UPDATE NOWAIT` (Oracle) / `FOR UPDATE SKIP LOCKED` (PostgreSQL)
+
+### SignalR Events (TransactionHub `/hubs/transaction`)
+
+**Client → Server:**
+
+| Method | Tham số | Mô tả |
+|--------|---------|-------|
+| `SubmitTransaction` | `{ description, amount, currency }` | Try-submit, return kết quả ngay |
+
+**Server → Client (broadcast ALL):**
+
+| Event | Payload | Mô tả |
+|-------|---------|-------|
+| `BankStatus` | `TransactionHistoryStatus` | Trạng thái bank + history |
+| `TransactionStatusChanged` | `{ id, state, message }` | processing / completed / failed |
+
+### Test Cases
+
+**Case 1 — Sequential processing**
+1. Mở `/transaction` — status "FREE — Ready"
+2. Submit 1 transaction → ✓ "Accepted", bank chuyển sang "BUSY — Processing"
+3. Submit thêm transaction trong khi bận
+4. ✓ "Rejected" ngay lập tức, message hiện ai đang block
+5. Sau 3-7s: ✓ Bank "FREE" lại, history cập nhật
+
+**Case 2 — Multi-client isolation**
+1. Mở 2 tab `/transaction`
+2. Tab A submit → bank BUSY
+3. ✓ Tab B cũng thấy bank BUSY ngay (realtime broadcast)
+4. Sau khi xong: ✓ Cả 2 tab thấy bank FREE cùng lúc
 
 ---
 
-### Case 2 — Reconnect sau mất kết nối ⭐ (case chính)
-1. Tab A và Tab B cùng join groupId=1
-2. **Tab A nhấn "Ngắt kết nối"** (status → 🔴 Disconnected)
-3. Tab B gửi 4 messages trong khi Tab A offline
-4. **Tab A nhấn "Kết nối lại"**
+## Use Case 3: Collaborative Document (Field-Level Lock)
 
-**Verify:**
-- Banner **"⟳ Đang đồng bộ 4 tin nhắn bị miss..."** xuất hiện ✓
-- Tab A hiển thị đủ 4 messages sau khi reconnect ✓
-- DB: `ReadReceipts` → `LastReadMessageId` của staffId=1 cập nhật đúng ✓
+### Kiến trúc
 
----
+```
+[User focus vào field]
+  Invoke "AcquireFieldLock"(docId, fieldId)
 
-### Case 3 — Nhiều client độc lập
-1. Mở 3 tab, cùng groupId=1, staffId lần lượt 1, 2, 3
-2. Tab 2 nhấn "Ngắt kết nối"
-3. Tab 1 gửi 2 messages
-4. Tab 2 nhấn "Kết nối lại"
+  Server: ConcurrentDictionary.AddOrUpdate
+  ├─ Acquired:  broadcast "FieldLocked" tới tất cả OTHERS
+  └─ Rejected:  return currentHolder, không thay đổi gì
 
-**Verify:**
-- Tab 2 đồng bộ đúng 2 messages bị miss ✓
-- Tab 3 không bị ảnh hưởng, pointer của staffId=3 độc lập ✓
+[User đang edit — heartbeat mỗi 8s]
+  Invoke "HeartbeatFieldLock" → gia hạn TTL thêm 30s
 
----
+[User blur (rời field)]
+  Invoke "ReleaseFieldLock" → broadcast "FieldUnlocked"
 
-### Case 4 — Auto leave group khi đóng tab
-1. Tab A join groupId=1
-2. **Đóng hoàn toàn Tab A** (Ctrl+W hoặc đóng cửa sổ)
-3. Tab B gửi 1 message
+[User disconnect]
+  OnDisconnectedAsync → auto-release ALL locks của connection đó
 
-**Verify:** Không có lỗi "connection not in group" trong server logs ✓
+[Background cleanup timer (5s interval)]
+  Quét locks hết TTL → broadcast "FieldsExpiredUnlocked" tới ALL
+```
+
+**Lock entry:** `ConcurrentDictionary<"docId:fieldId", FieldLockEntry>`
+- TTL: **30 giây** (gia hạn bởi heartbeat)
+- Cleanup: background timer 5s
+- Auto-release: OnDisconnectedAsync
+
+### SignalR Events (DocumentHub `/hubs/document`)
+
+**Client → Server (invoked):**
+
+| Method | Tham số | Returns |
+|--------|---------|---------|
+| `AcquireFieldLock` | `(docId, fieldId)` | `LockAcquireResult { acquired, expiresAt, currentHolder }` |
+| `ReleaseFieldLock` | `(docId, fieldId)` | void |
+| `HeartbeatFieldLock` | `(docId, fieldId)` | void |
+| `UpdateFieldValue` | `(docId, fieldId, value)` | void (throws nếu không phải lock holder) |
+
+**Server → Client:**
+
+| Event | Nhận bởi | Payload |
+|-------|----------|---------|
+| `LockSnapshot` | Caller (on connect) | `FieldLockInfo[]` — toàn bộ locks hiện tại |
+| `FieldLocked` | Others | `{ docId, fieldId, userId, userName, expiresAt }` |
+| `FieldUnlocked` | Others | `{ docId, fieldId }` |
+| `FieldValueChanged` | Others | `{ docId, fieldId, value, userId, userName }` |
+| `FieldsExpiredUnlocked` | All | `FieldLockInfo[]` — locks vừa hết TTL |
+
+### Test Cases
+
+**Case 1 — Lock + edit realtime**
+1. Mở 2 tab `/collab-doc` với tên khác nhau (Alice, Bob)
+2. Alice click vào field "Tên bên mua"
+3. ✓ Bob thấy field đó hiển thị "🔒 Alice đang chỉnh sửa..." và bị disabled
+4. Alice gõ text
+5. ✓ Bob thấy text cập nhật realtime
+6. Alice blur (click ra ngoài)
+7. ✓ Field mở khóa, Bob có thể edit
+
+**Case 2 — Lock TTL tự expire**
+1. Alice click vào field để lock
+2. Alice **không gõ gì** (không có heartbeat)
+3. Sau 30s: ✓ lock tự expire, broadcast "FieldsExpiredUnlocked", Bob có thể edit
+
+**Case 3 — Disconnect auto-release**
+1. Alice lock nhiều fields
+2. Alice nhấn "Rời khỏi" (hoặc đóng tab)
+3. ✓ Tất cả locks của Alice tự giải phóng ngay lập tức
+4. ✓ Bob thấy tất cả fields mở khóa
+
+**Case 4 — Concurrent lock attempt**
+1. Alice đang lock field "Địa chỉ"
+2. Bob click vào field "Địa chỉ"
+3. ✓ Server trả về `acquired: false`, Bob không chiếm được lock
+4. Alice blur → Bob click lại → ✓ Bob acquire thành công
 
 ---
 
@@ -305,7 +408,6 @@ docker compose logs -f frontend
 
 # Dừng tất cả
 docker compose down
-docker compose -f docker-compose.dev.yml down
 
 # Reset database (xóa volume)
 docker compose down -v

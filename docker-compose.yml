@@ -67,7 +67,25 @@ services:
     container_name: poc-aura-frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "4200:4200"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - poc-network
+
+  blazor:
+    build:
+      context: ./blazor
+      dockerfile: Dockerfile
+    container_name: poc-aura-blazor
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:8080
+      - Backend__Url=http://backend:8080
+    ports:
+      - "5001:8080"
     depends_on:
       backend:
         condition: service_healthy

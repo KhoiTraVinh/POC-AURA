@@ -1,0 +1,109 @@
+@page "/bank"
+@rendermode InteractiveServer
+@inject HubConnectionWorker Worker
+@implements IDisposable
+
+<div class="page">
+
+  <div class="page-header">
+    <h1>EFT/POS Processor — Transaction Engine</h1>
+  </div>
+
+  <!-- ── Connection Status ─────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Server Connections</div>
+    <div class="tenant-grid">
+      @foreach (var (id, (name, status, tenant)) in Worker.ConnectionStatuses)
+      {
+        <div class="tenant-item">
+          <span class="badge @StatusClass(status)">@status.ToUpper()</span>
+          <span class="tenant-name">@name / @tenant</span>
+        </div>
+      }
+      @if (Worker.ConnectionStatuses.Count == 0)
+      {
+        <div class="empty">No connections — <a href="/">add a server</a></div>
+      }
+    </div>
+  </div>
+
+  <!-- ── Processing Queue ──────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">
+      Currently Processing
+      @if (Worker.ProcessingEftJobs.Count > 0)
+      {
+        <span class="count-badge processing-pulse">@Worker.ProcessingEftJobs.Count</span>
+      }
+    </div>
+    @if (Worker.ProcessingEftJobs.Count == 0)
+    {
+      <div class="empty">Waiting for transactions…</div>
+    }
+    else
+    {
+      @foreach (var job in Worker.ProcessingEftJobs.ToList())
+      {
+        <div class="processing-item">
+          <div class="pi-spinner"></div>
+          <div class="pi-info">
+            <div class="pi-id">TXN-@job.TransactionId</div>
+            <div class="pi-desc">@job.Description</div>
+            <div class="pi-meta">@job.Amount.ToString("N0") @job.Currency · @job.SubmittedAt.ToLocalTime().ToString("HH:mm:ss")</div>
+          </div>
+          <div class="pi-status">Verifying…</div>
+        </div>
+      }
+    }
+  </div>
+
+  <!-- ── Completed ─────────────────────────────────────────────────────── -->
+  @if (Worker.CompletedEftJobs.Count > 0)
+  {
+    <div class="card">
+      <div class="card-title">Processed Transactions (last @Math.Min(Worker.CompletedEftJobs.Count, 10))</div>
+      <div class="completed-list">
+        @foreach (var (result, time) in Worker.CompletedEftJobs.TakeLast(10).Reverse())
+        {
+          <div class="completed-item @(result.Success ? "completed-ok" : "completed-fail")">
+            <span>@(result.Success ? "✓" : "✗")</span>
+            <span class="job-id">TXN-@result.TransactionId</span>
+            <span>@result.Message</span>
+            <span class="completed-time">@time.ToString("HH:mm:ss")</span>
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- ── Log ───────────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Activity Log</div>
+    <div class="log-box">
+      @foreach (var (level, msg, time) in Worker.Logs.TakeLast(30).Reverse())
+      {
+        <div class="log-entry log-@level">
+          <span class="log-time">@time.ToString("HH:mm:ss")</span>
+          <span>@msg</span>
+        </div>
+      }
+      @if (!Worker.Logs.Any()) { <div class="log-empty">No activity yet.</div> }
+    </div>
+  </div>
+
+</div>
+
+@code {
+  protected override void OnInitialized() => Worker.StateChanged += Refresh;
+  private void Refresh() => InvokeAsync(StateHasChanged);
+
+  private static string StatusClass(string s) => s switch
+  {
+    "connected"    => "badge-green",
+    "connecting"   => "badge-yellow",
+    "reconnecting" => "badge-yellow",
+    _ => "badge-gray"
+  };
+
+  public void Dispose() => Worker.StateChanged -= Refresh;
+}

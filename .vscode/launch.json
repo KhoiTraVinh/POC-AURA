@@ -1,8 +1,8 @@
 {
   "version": "0.2.0",
   "configurations": [
-    // ─── Backend: Launch với debugger (F5) ────────────────────────────────
-    // Dùng khi ở trong Dev Container — build rồi launch thẳng, không cần pipe
+
+    // ─── Backend ─────────────────────────────────────────────────────────
     {
       "name": "🔵 Backend: Launch & Debug",
       "type": "coreclr",
@@ -19,48 +19,77 @@
       },
       "justMyCode": true
     },
-
-    // ─── Backend: Attach vào process đang chạy (dotnet watch) ────────────
-    // Dùng khi đã có `dotnet watch run` đang chạy trong terminal
     {
-      "name": "🔵 Backend: Attach (process)",
+      "name": "🔵 Backend: Attach (dotnet watch)",
       "type": "coreclr",
       "request": "attach",
       "processId": "${command:pickProcess}",
       "justMyCode": true
     },
 
-    // ─── Frontend: Chrome debugger ────────────────────────────────────────
+    // ─── Blazor SmartHub ──────────────────────────────────────────────────
     {
-      "name": "🟠 Frontend: Chrome (localhost:4200)",
-      "type": "chrome",
+      "name": "🟣 Blazor: Launch & Debug",
+      "type": "coreclr",
       "request": "launch",
-      "url": "http://localhost:4200",
-      "webRoot": "${workspaceFolder}/frontend/src",
-      "sourceMapPathOverrides": {
-        "webpack:///./src/*": "${webRoot}/*",
-        "ng:///*": "${webRoot}/*"
-      }
+      "preLaunchTask": "build: blazor",
+      "program": "/workspace/blazor/POC.AURA.SmartHub/bin/Debug/net8.0/POC.AURA.SmartHub.dll",
+      "args": [],
+      "cwd": "/workspace/blazor/POC.AURA.SmartHub",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://0.0.0.0:5001",
+        "Backend__Url": "http://localhost:5000"
+      },
+      "justMyCode": true
+    },
+    {
+      "name": "🟣 Blazor: Attach (dotnet watch)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}",
+      "justMyCode": true
     },
 
-    // ─── Frontend: Edge debugger ──────────────────────────────────────────
+    // ─── Compound use (no individual build) ───────────────────────────────
     {
-      "name": "🟠 Frontend: Edge (localhost:4200)",
-      "type": "msedge",
+      "name": "🔵 Backend: Launch (compound)",
+      "type": "coreclr",
       "request": "launch",
-      "url": "http://localhost:4200",
-      "webRoot": "${workspaceFolder}/frontend/src",
-      "sourceMapPathOverrides": {
-        "webpack:///./src/*": "${webRoot}/*",
-        "ng:///*": "${webRoot}/*"
-      }
-    }
+      "program": "/workspace/backend/POC.AURA.Api/bin/Debug/net8.0/POC.AURA.Api.dll",
+      "args": [],
+      "cwd": "/workspace/backend/POC.AURA.Api",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://0.0.0.0:5000",
+        "ConnectionStrings__DefaultConnection": "Server=sqlserver,1433;Database=PocAuraDb;User Id=sa;Password=Aura@Poc2024!;TrustServerCertificate=True;"
+      },
+      "justMyCode": true
+    },
+    {
+      "name": "🟣 Blazor: Launch (compound)",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "/workspace/blazor/POC.AURA.SmartHub/bin/Debug/net8.0/POC.AURA.SmartHub.dll",
+      "args": [],
+      "cwd": "/workspace/blazor/POC.AURA.SmartHub",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://0.0.0.0:5001",
+        "Backend__Url": "http://localhost:5000"
+      },
+      "justMyCode": true
+    },
   ],
 
   "compounds": [
     {
-      "name": "🚀 Full Stack Debug",
-      "configurations": ["🔵 Backend: Launch & Debug", "🟠 Frontend: Chrome (localhost:4200)"],
+      "name": "🚀 Debug: BE + Blazor",
+      "configurations": ["🔵 Backend: Launch (compound)", "🟣 Blazor: Launch (compound)"],
+      "preLaunchTask": "build: backend + blazor",
       "stopAll": true
     }
   ]

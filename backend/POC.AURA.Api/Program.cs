@@ -1,108 +1,220 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Text.Json;
+using Hangfire;
+using Hangfire.SqlServer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using POC.AURA.Api.Data;
-using POC.AURA.Api.Entities;
-using POC.AURA.Api.Hubs;
+using POC.AURA.Api.Data.Repositories;
+using POC.AURA.Api.Server.Hubs;
+using POC.AURA.Api.Service;
+using POC.AURA.Api.Service.Auth;
+using POC.AURA.Api.Service.Batch;
+
+// Prevent ASP.NET Core from remapping standard JWT claim names (sub, name, ...)
+// to legacy .NET ClaimTypes (NameIdentifier, Name, ...).
+JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new() { Title = "POC AURA - SignalR API", Version = "v1" });
+    c.SwaggerDoc("v1", new() { Title = "POC AURA — SignalR API", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT"
+    });
 });
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// ── Application services ────────────────────────────────────────────────────
+builder.Services.AddScoped<IJobRepository, JobRepository>();
+builder.Services.AddScoped<IBatchJobRepository, BatchJobRepository>();
+
+builder.Services.AddSingleton<JwtService>();
+builder.Services.AddSingleton<IConnectionTracker, ConnectionTracker>();
+builder.Services.AddSingleton<ITransactionQueueService, TransactionQueueService>();
+builder.Services.AddSingleton<IDocumentLockService, DocumentLockService>();
+builder.Services.AddHostedService(p => (DocumentLockService)p.GetRequiredService<IDocumentLockService>());
+
+// Batch import: scoped service (upload orchestration) + scoped job (Hangfire execution)
+builder.Services.AddScoped<IBatchImportService, BatchImportService>();
+builder.Services.AddScoped<BatchImportJob>();
+
+// ── Hangfire ────────────────────────────────────────────────────────────────
+var connStr = builder.Configuration.GetConnectionString("DefaultConnection")!;
+builder.Services.AddHangfire(cfg => cfg
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UseSqlServerStorage(connStr, new SqlServerStorageOptions
+    {
+        CommandBatchMaxTimeout       = TimeSpan.FromMinutes(5),
+        SlidingInvisibilityTimeout   = TimeSpan.FromMinutes(5),
+        QueuePollInterval            = TimeSpan.Zero,
+        UseRecommendedIsolationLevel = true,
+        DisableGlobalLocks           = true,
+    }));
+builder.Services.AddHangfireServer(opt =>
+{
+    opt.Queues      = ["batch-import", "default"];
+    opt.WorkerCount = 2;
+});
+
+// ── Authentication (JWT Bearer) ─────────────────────────────────────────────
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = JwtService.SigningKey,
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ClockSkew = TimeSpan.Zero
+        };
+        // SignalR sends the token via query string (WebSocket cannot carry custom headers)
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var token = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(token) &&
+                    context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                    context.Token = token;
+                return Task.CompletedTask;
+            }
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+// ── SignalR ─────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    options.KeepAliveInterval = TimeSpan.FromSeconds(60);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(120);
+})
+.AddJsonProtocol(options =>
+{
+    options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
 });
 
+// ── CORS ────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAngular", policy =>
-    {
-        policy
-            .SetIsOriginAllowed(origin => true) // Allow any origin for dev
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
-});
+    options.AddPolicy("AllowAll", policy =>
+        policy.SetIsOriginAllowed(_ => true)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials()));
 
 var app = builder.Build();
 
-// Auto-migrate on startup
+// ── Database migration (with retry for Docker startup ordering) ─────────────
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
-
-    // Retry vì SQL Server container có thể chưa sẵn sàng ngay
     var retries = 5;
+
     while (retries-- > 0)
     {
         try
         {
             db.Database.Migrate();
-            logger.LogInformation("Database migration completed.");
-
-            // Seed Group mẫu để demo (idempotent)
-            if (!db.Groups.Any())
-            {
-                db.Groups.AddRange(
-                    new Group { GroupName = "Demo Group 1", CreatedAt = DateTime.UtcNow },
-                    new Group { GroupName = "Demo Group 2", CreatedAt = DateTime.UtcNow }
-                );
-                db.SaveChanges();
-                logger.LogInformation("Seed data created: 2 demo groups.");
-            }
-
+            logger.LogInformation("Database migration completed successfully.");
             break;
         }
         catch (Exception ex) when (retries > 0)
         {
-            logger.LogWarning("Migration failed ({Retries} retries left): {Message}", retries, ex.Message);
-            await Task.Delay(3000);
+            logger.LogWarning("Migration failed ({Left} retries left): {Msg}", retries, ex.Message);
+            await Task.Delay(3_000);
         }
         catch (Exception ex)
         {
             if (app.Environment.IsDevelopment())
             {
-                // Dev only: DB state bị lệch → xóa và tạo lại
-                logger.LogWarning("Migration failed in dev mode, resetting database: {Message}", ex.Message);
+                logger.LogWarning("Migration failed — resetting DB in dev: {Msg}", ex.Message);
                 db.Database.EnsureDeleted();
                 db.Database.Migrate();
-                logger.LogInformation("Database reset and migrated successfully.");
             }
             else
             {
-                logger.LogError(ex, "Migration failed.");
+                logger.LogError(ex, "Database migration failed.");
                 throw;
             }
         }
     }
 }
 
+// ── Create batch tables if not yet migrated ──────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.ExecuteSqlRaw("""
+        IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'BatchJobs')
+        BEGIN
+            CREATE TABLE BatchJobs (
+                Id            NVARCHAR(50)  NOT NULL PRIMARY KEY,
+                TenantId      NVARCHAR(100) NOT NULL,
+                FileName      NVARCHAR(260) NOT NULL,
+                FilePath      NVARCHAR(500) NOT NULL,
+                FileSizeBytes BIGINT        NOT NULL DEFAULT 0,
+                TotalRows     INT           NOT NULL DEFAULT 0,
+                ProcessedRows INT           NOT NULL DEFAULT 0,
+                Status        NVARCHAR(20)  NOT NULL DEFAULT 'queued',
+                HangfireJobId NVARCHAR(100) NULL,
+                ErrorMessage  NVARCHAR(MAX) NULL,
+                CreatedAt     DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+                CompletedAt   DATETIME2     NULL
+            );
+            CREATE TABLE BatchCheckpoints (
+                Id           INT IDENTITY PRIMARY KEY,
+                BatchId      NVARCHAR(50) NOT NULL REFERENCES BatchJobs(Id) ON DELETE CASCADE,
+                ChunkIndex   INT          NOT NULL,
+                RowsInserted INT          NOT NULL,
+                CompletedAt  DATETIME2    NOT NULL DEFAULT GETUTCDATE()
+            );
+            CREATE TABLE ImportedRecords (
+                Id         BIGINT IDENTITY PRIMARY KEY,
+                BatchId    NVARCHAR(50)   NOT NULL,
+                Name       NVARCHAR(200)  NOT NULL,
+                Category   NVARCHAR(100)  NOT NULL,
+                Value      DECIMAL(18,2)  NOT NULL,
+                Timestamp  DATETIME2      NOT NULL,
+                ImportedAt DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+            );
+            CREATE INDEX IX_ImportedRecords_BatchId ON ImportedRecords(BatchId);
+        END
+        """);
+}
+
+// ── Middleware pipeline ──────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowAngular");
-
-app.Use((context, next) =>
-{
-    Console.WriteLine($"Request: {context.Request.Method} {context.Request.Path}");
-    return next();
-});
+app.UseCors("AllowAll");
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<ChatHub>("/hubs/chat");
-
+app.MapHub<AuraHub>("/hubs/aura");
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+
+app.UseHangfireDashboard("/hangfire", new DashboardOptions { Authorization = [] });
 
 app.Run();

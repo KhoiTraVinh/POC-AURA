@@ -1,14 +1,14 @@
 using Microsoft.EntityFrameworkCore;
-using POC.AURA.Api.Entities;
+using POC.AURA.Api.Data.Entities;
 
 namespace POC.AURA.Api.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
-    public DbSet<Group> Groups { get; set; }
-    public DbSet<Member> Members { get; set; }
-    public DbSet<Message> Messages { get; set; }
-    public DbSet<ReadReceipt> ReadReceipts { get; set; }
+    public DbSet<Message>          Messages          { get; set; }
+    public DbSet<BatchJob>         BatchJobs         { get; set; }
+    public DbSet<BatchCheckpoint>  BatchCheckpoints  { get; set; }
+    public DbSet<ImportedRecord>   ImportedRecords   { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1,0 +1,25 @@
+{
+  "Files": [
+    {
+      "Id": "/workspace/blazor/POC.AURA.SmartHub/wwwroot/app.css",
+      "PackagePath": "staticwebassets/app.css"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.POC.AURA.SmartHub.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.build.POC.AURA.SmartHub.props",
+      "PackagePath": "build\\POC.AURA.SmartHub.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildMultiTargeting.POC.AURA.SmartHub.props",
+      "PackagePath": "buildMultiTargeting\\POC.AURA.SmartHub.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildTransitive.POC.AURA.SmartHub.props",
+      "PackagePath": "buildTransitive\\POC.AURA.SmartHub.props"
+    }
+  ],
+  "ElementsToRemove": []
+}
