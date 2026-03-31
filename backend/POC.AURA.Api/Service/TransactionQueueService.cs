@@ -27,26 +27,26 @@ namespace POC.AURA.Api.Service;
 public sealed class TransactionQueueService : ITransactionQueueService
 {
     // ── State ──────────────────────────────────────────────────────────────
-    private readonly SemaphoreSlim _globalLock   = new(1, 1);
-    private readonly object        _currentSync  = new();
-    private TransactionStatus?     _current;
+    private readonly SemaphoreSlim _globalLock = new(1, 1);
+    private readonly object _currentSync = new();
+    private TransactionStatus? _current;
 
     private readonly ConcurrentQueue<TransactionStatus> _history = new();
     private const int MaxHistory = 50;
 
     // ── Dependencies ───────────────────────────────────────────────────────
-    private readonly IHubContext<AuraHub>              _hub;
-    private readonly IServiceScopeFactory              _scopeFactory;
-    private readonly ILogger<TransactionQueueService>  _logger;
+    private readonly IHubContext<AuraHub> _hub;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<TransactionQueueService> _logger;
 
     public TransactionQueueService(
-        IHubContext<AuraHub>             hub,
-        IServiceScopeFactory             scopeFactory,
+        IHubContext<AuraHub> hub,
+        IServiceScopeFactory scopeFactory,
         ILogger<TransactionQueueService> logger)
     {
-        _hub          = hub;
+        _hub = hub;
         _scopeFactory = scopeFactory;
-        _logger       = logger;
+        _logger = logger;
     }
 
     // ── ITransactionQueueService ───────────────────────────────────────────
@@ -70,7 +70,7 @@ public sealed class TransactionQueueService : ITransactionQueueService
             return new TransactionSubmitResult(null, "rejected", reason, current);
         }
 
-        var id     = GenerateId();
+        var id = GenerateId();
         var status = new TransactionStatus(id, "processing", request.Description,
             null, DateTime.UtcNow, null);
 
@@ -98,7 +98,7 @@ public sealed class TransactionQueueService : ITransactionQueueService
             return;
         }
 
-        var state    = req.Success ? JobStatuses.Completed : JobStatuses.Failed;
+        var state = req.Success ? JobStatuses.Completed : JobStatuses.Failed;
         var finished = new TransactionStatus(
             current.Id, state, current.Description,
             req.Message, current.SubmittedAt, DateTime.UtcNow);
@@ -107,7 +107,7 @@ public sealed class TransactionQueueService : ITransactionQueueService
         while (_history.Count > MaxHistory) _history.TryDequeue(out _);
 
         using var scope = _scopeFactory.CreateScope();
-        var repo        = scope.ServiceProvider.GetRequiredService<IJobRepository>();
+        var repo = scope.ServiceProvider.GetRequiredService<IJobRepository>();
         await repo.CompleteAsync(req.TransactionId, tenantId, MessageTypes.BankTransaction,
             req.Success, req.Message ?? "");
 
@@ -135,12 +135,12 @@ public sealed class TransactionQueueService : ITransactionQueueService
             var payload = JsonSerializer.Serialize(new
             {
                 description = request.Description,
-                amount      = request.Amount,
-                currency    = request.Currency
+                amount = request.Amount,
+                currency = request.Currency
             });
 
             using var scope = _scopeFactory.CreateScope();
-            var repo        = scope.ServiceProvider.GetRequiredService<IJobRepository>();
+            var repo = scope.ServiceProvider.GetRequiredService<IJobRepository>();
             await repo.SaveAsync(tenantId, MessageTypes.BankTransaction, id, payload, connectionId);
 
             await BroadcastEventAsync(id, "processing",

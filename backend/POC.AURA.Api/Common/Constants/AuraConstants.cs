@@ -17,6 +17,16 @@ public static class JobStatuses
     public const string Failed    = "failed";
 }
 
+/// <summary>Batch import job lifecycle states.</summary>
+public static class BatchStatuses
+{
+    public const string Queued    = "queued";
+    public const string Running   = "running";
+    public const string Completed = "completed";
+    public const string Failed    = "failed";
+    public const string Cancelled = "cancelled";
+}
+
 /// <summary>JWT claim names used across auth, hubs, and controllers.</summary>
 public static class ClaimNames
 {
@@ -114,6 +124,19 @@ public static class HubEvents
 
     /// <summary>Broadcast when one or more locks expire due to missed heartbeats.</summary>
     public const string FieldsExpiredUnlocked = "FieldsExpiredUnlocked";
+
+    // ── Batch Import ───────────────────────────────────────────────────────
+    /// <summary>Pushed after each chunk completes: { batchId, processedRows, totalRows, percent, rowsPerSecond }.</summary>
+    public const string BatchProgress   = "BatchProgress";
+
+    /// <summary>Pushed when all chunks are done: { batchId, processedRows, durationMs, rowsPerSecond }.</summary>
+    public const string BatchCompleted  = "BatchCompleted";
+
+    /// <summary>Pushed when the job fails permanently: { batchId, error }.</summary>
+    public const string BatchFailed     = "BatchFailed";
+
+    /// <summary>Pushed when the user cancels: { batchId, processedRows }.</summary>
+    public const string BatchCancelled  = "BatchCancelled";
 
     // ── Connection ─────────────────────────────────────────────────────────
     public const string ClientConnected    = "ClientConnected";

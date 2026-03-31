@@ -34,5 +34,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/collaborative-doc/collaborative-doc.component').then((m) => m.CollaborativeDocComponent),
   },
+  {
+    path: 'batch-import',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/batch-import/batch-import.component').then((m) => m.BatchImportComponent),
+  },
   { path: '**', redirectTo: 'login' },
 ];

@@ -12,21 +12,21 @@ public class DocumentLockService : IDocumentLockService, IHostedService, IDispos
 
     // Key: "docId:fieldId"
     private readonly ConcurrentDictionary<string, FieldLockEntry> _locks = new();
-    private readonly IHubContext<AuraHub>         _hub;
+    private readonly IHubContext<AuraHub> _hub;
     private readonly ILogger<DocumentLockService> _logger;
     private Timer? _cleanupTimer;
 
     public DocumentLockService(
-        IHubContext<AuraHub>         hub,
+        IHubContext<AuraHub> hub,
         ILogger<DocumentLockService> logger)
     {
-        _hub    = hub;
+        _hub = hub;
         _logger = logger;
     }
 
     public LockAcquireResult TryAcquire(string docId, string fieldId, string userId, string userName, string connectionId)
     {
-        var key      = $"{docId}:{fieldId}";
+        var key = $"{docId}:{fieldId}";
         var newEntry = new FieldLockEntry(docId, fieldId, userId, userName, connectionId,
             DateTime.UtcNow.AddSeconds(LockTtlSeconds));
 
@@ -111,7 +111,7 @@ public class DocumentLockService : IDocumentLockService, IHostedService, IDispos
 
     private void CleanupExpired(object? state)
     {
-        var now     = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
         var expired = new List<FieldLockInfo>();
 
         foreach (var (key, entry) in _locks)
